@@ -737,9 +737,57 @@ async function renderMasters() {
 }
 
 /* ============================ Admin: Barcodes ============================ */
+// Shared render options. CODE128 encodes any item value and is read by the
+// in-app camera scanner (BarcodeDetector) and standard handheld scanners.
+const BC_OPTS = { format: "CODE128", displayValue: true, height: 50, fontSize: 13, margin: 8, background: "#ffffff", lineColor: "#000000" };
+// Deterministic code for an item that has none yet — stable across regenerations.
+const bcCodeFor = (it) => it.barcode || ("M" + String(it.id).padStart(7, "0"));
+function drawBarcode(el, value, opts) {
+  if (!window.JsBarcode) { el.replaceWith(Object.assign(document.createElement("span"), { className: "text-xs text-amber-400", textContent: "barcode lib not loaded" })); return; }
+  try { window.JsBarcode(el, value, { ...BC_OPTS, ...(opts || {}) }); } catch { /* invalid value — leave blank */ }
+}
+function downloadBarcode(value, label) {
+  if (!window.JsBarcode) return toast("Barcode library still loading — try again", true);
+  const c = document.createElement("canvas");
+  try { window.JsBarcode(c, value, { ...BC_OPTS, height: 90, fontSize: 18, margin: 12 }); }
+  catch { return toast("Couldn't render that barcode", true); }
+  const a = document.createElement("a");
+  a.href = c.toDataURL("image/png");
+  a.download = "barcode_" + String(label || value).replace(/[^a-z0-9]+/gi, "_") + ".png";
+  a.click();
+}
+function printAllBarcodes() {
+  if (!window.JsBarcode) return toast("Barcode library still loading — try again", true);
+  const withBc = S.catalog.items.filter((i) => i.barcode);
+  if (!withBc.length) return toast("No barcodes yet — generate some first", true);
+  const cards = withBc.map((i) => {
+    const c = document.createElement("canvas");
+    try { window.JsBarcode(c, i.barcode, { ...BC_OPTS, height: 70, fontSize: 14, margin: 8 }); } catch { return ""; }
+    return `<div class="card"><div class="nm">${esc(i.name)}</div><img src="${c.toDataURL("image/png")}"></div>`;
+  }).join("");
+  const w = window.open("", "_blank");
+  if (!w) return toast("Allow pop-ups to print barcodes", true);
+  w.document.write(`<!doctype html><html><head><title>Mise barcodes</title><style>
+    body{font-family:system-ui,sans-serif;margin:12px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    .card{border:1px solid #ddd;border-radius:8px;padding:8px;text-align:center;page-break-inside:avoid}
+    .nm{font-size:12px;font-weight:600;margin-bottom:4px}
+    .card img{max-width:100%}
+    @media print{.card{border-color:#999}}
+  </style></head><body><div class="grid">${cards}</div>
+  <script>window.onload=function(){setTimeout(function(){window.print();},200);};<\/script></body></html>`);
+  w.document.close();
+}
 function renderBarcodes() {
   const items = S.catalog.items;
-  shell(`<div class="flex items-center justify-between mb-3"><div class="text-sm text-slate-400">Assign or edit barcodes. Pick an item, then scan or type its barcode.</div>${ieButtons("barcodes")}</div>
+  shell(`<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="text-sm text-slate-400">Generate, assign or scan barcodes. Generated codes are saved to the item, so scanning one pulls up its data.</div>
+      <div class="flex gap-2">
+        <button id="ba-genall" class="bg-sky-600 hover:bg-sky-500 text-white rounded-lg px-3 py-1.5 text-xs">${I.scan} <span class="align-middle">Generate missing</span></button>
+        <button id="ba-printall" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">${I.down} <span class="align-middle">Print all</span></button>
+        ${ieButtons("barcodes")}
+      </div>
+    </div>
     <div class="bg-slate-900 border border-amber-800/40 rounded-xl p-4 mb-4">
       <div id="ba-mode" class="text-sm font-medium mb-2 text-amber-300">Assign a barcode</div>
       ${searchBox("ba-name", "Search item", items.map((i) => ({ name: i.name, sub: i.barcode || "no barcode" })), () => baPick())}
@@ -752,8 +800,9 @@ function renderBarcodes() {
       <div id="ba-msg" class="text-xs text-slate-500 mt-2"></div>
     </div>
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[380px]"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase"><tr><th class="text-left px-3 py-2">Item</th><th class="text-left px-3 py-2">Barcode</th><th class="text-left px-3 py-2">Unit</th><th class="px-3 py-2"></th></tr></thead>
-      <tbody class="divide-y divide-slate-800">${items.map((i) => `<tr><td class="px-3 py-2">${esc(i.name)}</td><td class="px-3 py-2 font-mono text-xs ${i.barcode ? "" : "text-slate-600"}">${esc(i.barcode || "—")}</td><td class="px-3 py-2 text-slate-400">${esc(i.unit)}</td><td class="px-3 py-2 text-right whitespace-nowrap"><button data-bcedit='${esc(JSON.stringify({ id: i.id, name: i.name, barcode: i.barcode }))}' class="text-amber-300 text-xs">Edit</button>${i.barcode ? `<button data-bcclear="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Clear</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No items.</td></tr>`}</tbody></table></div></div>`);
+      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px]"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase"><tr><th class="text-left px-3 py-2">Item</th><th class="text-left px-3 py-2">Unit</th><th class="text-left px-3 py-2">Label</th><th class="px-3 py-2"></th></tr></thead>
+      <tbody class="divide-y divide-slate-800">${items.map((i) => `<tr><td class="px-3 py-2">${esc(i.name)}<div class="font-mono text-[10px] text-slate-500">${esc(i.barcode || "no barcode")}</div></td><td class="px-3 py-2 font-mono text-xs ${i.barcode ? "" : "text-slate-600"}">${esc(i.unit)}</td><td class="px-3 py-2">${i.barcode ? `<canvas data-thumb="${esc(i.barcode)}" class="bg-white rounded p-0.5"></canvas>` : '<span class="text-slate-600 text-xs">—</span>'}</td><td class="px-3 py-2 text-right whitespace-nowrap">${i.barcode ? `<button data-bcdl="${i.id}" class="text-emerald-300 text-xs">Download</button>` : `<button data-bcgen="${i.id}" class="text-sky-300 text-xs">Generate</button>`}<button data-bcedit='${esc(JSON.stringify({ id: i.id, name: i.name, barcode: i.barcode }))}' class="text-amber-300 text-xs ml-2">Edit</button>${i.barcode ? `<button data-bcclear="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Clear</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No items. Add items in Masters first.</td></tr>`}</tbody></table></div></div>`);
+  app.querySelectorAll("canvas[data-thumb]").forEach((c) => drawBarcode(c, c.dataset.thumb, { height: 34, fontSize: 11, margin: 4 }));
   wireImports();
 
   const findItem = () => S.catalog.items.find((x) => x.name.toLowerCase() === $("ba-name").value.trim().toLowerCase());
@@ -766,6 +815,24 @@ function renderBarcodes() {
     const it = findItem(); if (!it) return toast("Pick an item first", true);
     try { await saveBarcode(it, $("ba-code").value.trim()); } catch (e) { toast(e.message, true); }
   };
+  $("ba-printall").onclick = printAllBarcodes;
+  $("ba-genall").onclick = async () => {
+    const missing = S.catalog.items.filter((i) => !i.barcode);
+    if (!missing.length) return toast("Every item already has a barcode");
+    if (!confirm(`Generate barcodes for ${missing.length} item(s) without one?`)) return;
+    try {
+      for (const it of missing) await api("/api/items/" + it.id + "/barcode", { method: "PUT", body: JSON.stringify({ barcode: bcCodeFor(it) }) });
+      S.catalog = await api("/api/catalog"); toast(`Generated ${missing.length} barcode(s)`); renderBarcodes();
+    } catch (e) { toast(e.message, true); }
+  };
+  app.querySelectorAll("[data-bcgen]").forEach((b) => (b.onclick = async () => {
+    const it = S.catalog.items.find((x) => x.id === parseInt(b.dataset.bcgen, 10));
+    if (it) { try { await saveBarcode(it, bcCodeFor(it)); } catch (e) { toast(e.message, true); } }
+  }));
+  app.querySelectorAll("[data-bcdl]").forEach((b) => (b.onclick = () => {
+    const it = S.catalog.items.find((x) => x.id === parseInt(b.dataset.bcdl, 10));
+    if (it) downloadBarcode(it.barcode, it.name);
+  }));
   $("ba-scan").onclick = () => startCamera($("ba-video"), async (code) => {
     $("ba-code").value = code;
     const it = findItem();
