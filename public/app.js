@@ -564,7 +564,9 @@ function renderUpload() {
 }
 
 /* ============================ Admin: Masters view ============================ */
-async function renderMasters() {
+let masterPage = 0;
+async function renderMasters(retainPage) {
+  if (!retainPage) masterPage = 0;
   let m; try { m = await api("/api/masters"); } catch (e) { return shell(`<div class="text-slate-400">${esc(e.message)}</div>`); }
   const card = (title, count, io, body) => `<div class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4">
     <div class="flex items-center justify-between mb-3"><div class="text-sm font-medium">${title} <span class="text-slate-500">(${count})</span></div>${io}</div>${body}</div>`;
@@ -577,15 +579,14 @@ async function renderMasters() {
     <p class="text-sm text-slate-400 mb-4">Each master has its own Excel <b>Export</b> and <b>Import</b>. Importing replaces that master (Barcodes only updates barcodes on matching items).</p>
 
     ${card("Items", m.items.length, ieButtons("items"),
-      tbl(["Name", "Category", "Unit", "Pack", "Price", "Cost/base", "Barcode", ""],
-        m.items.map((i) => `<tr><td class="px-2 py-1.5">${esc(i.name)}</td><td class="px-2 py-1.5 text-slate-400">${esc(i.category)}</td><td class="px-2 py-1.5">${esc(i.unit)}</td><td class="px-2 py-1.5 num">${i.pack_qty}</td><td class="px-2 py-1.5 num">${inr(i.price)}</td><td class="px-2 py-1.5 num text-amber-300">${inr(i.cost_per_base)}/${esc(i.base_unit)}</td><td class="px-2 py-1.5 font-mono text-xs">${esc(i.barcode)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-itemedit='${esc(JSON.stringify(i))}' class="text-amber-300 text-xs">Edit</button><button data-itemdel="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) +
+      `<div id="it-table-wrap"></div>` +
       `<div class="mt-3 border-t border-slate-800 pt-3">
         <div id="it-mode" class="text-xs text-amber-300 mb-2">Add a new item</div>
         <datalist id="it-cats">${m.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
         <div class="grid sm:grid-cols-3 gap-2 mb-2">
           <input id="it-name" placeholder="Name" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
           <input id="it-cat" list="it-cats" placeholder="Category" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
-          <select id="it-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${["kg", "g", "l", "ml", "piece"].map((u) => `<option value="${u}">${u}</option>`).join("")}</select>
+          <select id="it-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${["ml", "ltr", "kg", "gm", "box", "qty", "pcs", "pack", "g", "l", "piece"].map((u) => `<option value="${u}">${u}</option>`).join("")}</select>
           <input id="it-pack" type="number" inputmode="decimal" placeholder="Pack qty (units per pack)" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
           <input id="it-price" type="number" inputmode="decimal" placeholder="Price per pack" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
           <input id="it-bc" placeholder="Barcode (optional)" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
@@ -689,29 +690,54 @@ async function renderMasters() {
   }));
   app.querySelectorAll("[data-recdel]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this recipe?")) return; await api("/api/recipes/" + b.dataset.recdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(); }));
 
-  /* ----- item add / edit ----- */
+  /* ----- item table with pagination ----- */
+  const ITEMS_PER_PAGE = 10;
   let editItemId = null;
   const fillItem = (it) => {
     editItemId = it ? it.id : null;
     $("it-name").value = it ? it.name : "";
     $("it-cat").value = it ? (it.category || "") : "";
-    $("it-unit").value = it ? it.unit : "kg";
+    $("it-unit").value = it ? it.unit : "ml";
     $("it-pack").value = it ? it.pack_qty : "";
     $("it-price").value = it ? it.price : "";
     $("it-bc").value = it ? (it.barcode || "") : "";
     $("it-mode").textContent = it ? `Editing: ${it.name}` : "Add a new item";
+  };
+  const renderItemsTable = (page) => {
+    const wrap = $("it-table-wrap"); if (!wrap) return;
+    const start = page * ITEMS_PER_PAGE;
+    const slice = m.items.slice(start, start + ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(m.items.length / ITEMS_PER_PAGE);
+    const pager = totalPages > 1 ? `<div class="flex items-center justify-between mt-2 px-1 text-xs text-slate-400">
+      <span>${start + 1}–${Math.min(start + ITEMS_PER_PAGE, m.items.length)} of ${m.items.length} items</span>
+      <div class="flex gap-1.5">
+        <button id="it-prev" ${page === 0 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
+        <button id="it-next" ${page >= totalPages - 1 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
+      </div>
+    </div>` : "";
+    wrap.innerHTML = tbl(["Name", "Category", "Unit", "Pack", "Price", "Cost/base", "Barcode", ""],
+      slice.map((i) => `<tr><td class="px-2 py-1.5">${esc(i.name)}</td><td class="px-2 py-1.5 text-slate-400">${esc(i.category)}</td><td class="px-2 py-1.5">${esc(i.unit)}</td><td class="px-2 py-1.5 num">${i.pack_qty}</td><td class="px-2 py-1.5 num">${inr(i.price)}</td><td class="px-2 py-1.5 num text-amber-300">${inr(i.cost_per_base)}/${esc(i.base_unit)}</td><td class="px-2 py-1.5 font-mono text-xs">${esc(i.barcode)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-itemedit='${esc(JSON.stringify(i))}' class="text-amber-300 text-xs">Edit</button><button data-itemdel="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) + pager;
+    wrap.querySelectorAll("[data-itemedit]").forEach((b) => (b.onclick = () => { fillItem(JSON.parse(b.dataset.itemedit)); $("it-name").scrollIntoView({ behavior: "smooth", block: "center" }); $("it-name").focus(); }));
+    wrap.querySelectorAll("[data-itemdel]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this item?")) return; await api("/api/items/" + b.dataset.itemdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(true); }));
+    if ($("it-prev")) $("it-prev").onclick = () => { masterPage = page - 1; renderItemsTable(masterPage); };
+    if ($("it-next")) $("it-next").onclick = () => { masterPage = page + 1; renderItemsTable(masterPage); };
+  };
+  renderItemsTable(masterPage);
+  $("it-name").oninput = () => {
+    const nm = $("it-name").value.trim().toLowerCase();
+    if (!nm || editItemId) return;
+    const match = m.items.find((i) => i.name.toLowerCase() === nm);
+    if (match) { $("it-unit").value = match.unit; if (!$("it-cat").value) $("it-cat").value = match.category || ""; }
   };
   $("it-save").onclick = async () => {
     const body = { name: $("it-name").value, category: $("it-cat").value, unit: $("it-unit").value, pack_qty: $("it-pack").value, price: $("it-price").value, barcode: $("it-bc").value };
     if (!body.name.trim()) return toast("Item name required", true);
     try {
       await api(editItemId ? "/api/items/" + editItemId : "/api/items", { method: editItemId ? "PUT" : "POST", body: JSON.stringify(body) });
-      S.catalog = await api("/api/catalog"); toast(editItemId ? "Item updated" : "Item added"); renderMasters();
+      S.catalog = await api("/api/catalog"); toast(editItemId ? "Item updated" : "Item added"); renderMasters(true);
     } catch (e) { toast(e.message, true); }
   };
   $("it-clear").onclick = () => fillItem(null);
-  app.querySelectorAll("[data-itemedit]").forEach((b) => (b.onclick = () => { fillItem(JSON.parse(b.dataset.itemedit)); $("it-name").scrollIntoView({ behavior: "smooth", block: "center" }); $("it-name").focus(); }));
-  app.querySelectorAll("[data-itemdel]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this item?")) return; await api("/api/items/" + b.dataset.itemdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(); }));
 
   /* ----- containers add / edit ----- */
   let editContId = null;
