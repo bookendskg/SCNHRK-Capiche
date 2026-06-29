@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#020617" />
+<title>Mise — Stock Count</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html,body{margin:0;background:#020617;color:#e2e8f0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-tap-highlight-color:transparent;transition:background-color .25s ease,color .25s ease}
+  .num{font-variant-numeric:tabular-nums}
+  input,select,button{font-family:inherit}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-thumb{background:#334155;border-radius:99px}
+  ::-webkit-scrollbar-track{background:transparent}
+  .fadein{animation:f .2s ease-out}@keyframes f{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  input[type=number]{-moz-appearance:textfield}
+  input,select{transition:border-color .15s,box-shadow .15s}
+  .btn-pop{transition:transform .12s ease,box-shadow .15s ease}
+  .btn-pop:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.35)}
+  .btn-pop:active{transform:translateY(0) scale(.96);box-shadow:none}
+  .grad-logo{background:linear-gradient(135deg,#f59e0b,#ec4899)}
+  .pop-in{animation:pop .2s cubic-bezier(.34,1.56,.64,1)}@keyframes pop{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:scale(1)}}
+  .overflow-x-auto{-webkit-overflow-scrolling:touch}
+  tbody tr{transition:background-color .1s}
+  tbody tr:hover{background-color:rgba(255,255,255,.04)}
+
+  /* ===================== LIGHT MODE ===================== */
+  html[data-theme=light] body{background:#f1f5f9;color:#0f172a}
+  html[data-theme=light] ::-webkit-scrollbar-thumb{background:#cbd5e1}
+  /* Surfaces */
+  html[data-theme=light] .bg-slate-900{background-color:#fff!important}
+  html[data-theme=light] .bg-slate-950{background-color:#f8fafc!important}
+  html[data-theme=light] .bg-slate-800{background-color:#f1f5f9!important}
+  html[data-theme=light] .hover\:bg-slate-800:hover{background-color:#e2e8f0!important}
+  html[data-theme=light] .hover\:bg-slate-700:hover{background-color:#e2e8f0!important}
+  /* Header (handles bg-slate-900/90 + backdrop-blur) */
+  html[data-theme=light] header{background-color:rgba(255,255,255,.97)!important;box-shadow:0 1px 12px rgba(0,0,0,.08)!important}
+  /* Table headers (bg-slate-950/50) */
+  html[data-theme=light] thead{background-color:#f8fafc!important}
+  /* Borders & dividers */
+  html[data-theme=light] .border-slate-800{border-color:#e2e8f0!important}
+  html[data-theme=light] .border-slate-700{border-color:#cbd5e1!important}
+  html[data-theme=light] .divide-slate-800>:not([hidden])~:not([hidden]){border-color:#e2e8f0!important}
+  html[data-theme=light] .border-amber-800\/40{border-color:rgba(245,158,11,.35)!important}
+  /* Slate text */
+  html[data-theme=light] .text-slate-100{color:#0f172a!important}
+  html[data-theme=light] .text-slate-200{color:#1e293b!important}
+  html[data-theme=light] .text-slate-300{color:#334155!important}
+  html[data-theme=light] .text-slate-400{color:#475569!important}
+  html[data-theme=light] .text-slate-500{color:#64748b!important}
+  html[data-theme=light] .text-slate-600{color:#94a3b8!important}
+  html[data-theme=light] .hover\:text-slate-300:hover{color:#0f172a!important}
+  /* Accent text — light-safe versions */
+  html[data-theme=light] .text-amber-300{color:#b45309!important}
+  html[data-theme=light] .text-amber-400{color:#92400e!important}
+  html[data-theme=light] .text-emerald-300{color:#065f46!important}
+  html[data-theme=light] .text-emerald-400{color:#059669!important}
+  html[data-theme=light] .text-sky-300{color:#0369a1!important}
+  html[data-theme=light] .text-violet-300{color:#6d28d9!important}
+  html[data-theme=light] .text-rose-300{color:#be123c!important}
+  html[data-theme=light] .text-rose-400{color:#be123c!important}
+  html[data-theme=light] .text-teal-400{color:#0f766e!important}
+  html[data-theme=light] .text-teal-200{color:#0f766e!important}
+  html[data-theme=light] .placeholder\:text-teal-700\/70::placeholder{color:rgba(15,118,110,.5)!important}
+  /* Toast / notification banners */
+  html[data-theme=light] .bg-emerald-950{background-color:#ecfdf5!important}
+  html[data-theme=light] .border-emerald-800{border-color:#6ee7b7!important}
+  html[data-theme=light] .text-emerald-200{color:#065f46!important}
+  html[data-theme=light] .bg-red-950{background-color:#fff1f2!important}
+  html[data-theme=light] .border-red-800{border-color:#fca5a5!important}
+  html[data-theme=light] .text-red-200{color:#9f1239!important}
+  html[data-theme=light] .text-red-400{color:#be123c!important}
+  /* Table row hover */
+  html[data-theme=light] tbody tr:hover{background-color:rgba(0,0,0,.025)!important}
+  /* Button shadow */
+  html[data-theme=light] .btn-pop:hover{box-shadow:0 6px 20px rgba(0,0,0,.12)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="/app.js"></script>
+</body>
+</html>
