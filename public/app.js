@@ -113,7 +113,7 @@ function shell(content) {
   app.innerHTML = `
   <div class="min-h-screen">
     <header class="sticky top-0 z-30 bg-slate-900/90 backdrop-blur border-b border-slate-800">
-      <div class="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+      <div class="max-w-3xl lg:max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
         <div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg grad-logo flex items-center justify-center text-white font-bold text-sm shadow-md shadow-pink-500/10">M</div><span class="font-semibold">Mise</span></div>
         <div class="flex items-center gap-3 text-sm">
           <span class="hidden sm:inline text-slate-400 max-w-[8rem] truncate">${esc(S.me.name || S.me.username)}</span>
@@ -122,9 +122,9 @@ function shell(content) {
           <button id="logout" class="text-slate-500 hover:text-slate-300 text-sm">Sign out</button>
         </div>
       </div>
-      <nav class="max-w-3xl mx-auto px-3 pb-2 flex gap-1.5 overflow-x-auto">${navHtml}</nav>
+      <nav class="max-w-3xl lg:max-w-5xl mx-auto px-3 pb-2 flex gap-1.5 overflow-x-auto">${navHtml}</nav>
     </header>
-    <main class="max-w-3xl mx-auto px-4 py-5 fadein">${content}</main>
+    <main class="max-w-3xl lg:max-w-5xl mx-auto px-4 py-5 fadein">${content}</main>
   </div>`;
   app.querySelectorAll("[data-nav]").forEach((b) => (b.onclick = () => { S.nav = b.dataset.nav; route(); }));
   $("logout").onclick = async () => { await api("/api/logout", { method: "POST" }); S.me = null; renderLogin(); };
@@ -603,14 +603,14 @@ async function renderCountsList() {
   let rows = []; try { rows = await api("/api/counts"); } catch {}
   const admin = S.me.role === "admin";
   shell(`<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px]"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase">
+    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px] rcard"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase">
       <tr><th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Outlet</th><th class="text-left px-3 py-2">Status</th><th class="text-right px-3 py-2">Total</th><th></th></tr></thead>
     <tbody class="divide-y divide-slate-800">
     ${rows.map((c) => `<tr>
-      <td class="px-3 py-2">${esc(countTitle(c))}</td><td class="px-3 py-2 text-slate-300">${esc(c.outlet_name)}</td>
-      <td class="px-3 py-2">${c.status === "completed" ? '<span class="text-emerald-400">Completed</span>' : '<span class="text-amber-400">Open</span>'}</td>
-      <td class="px-3 py-2 text-right num">${inr(c.total_value)}</td>
-      <td class="px-3 py-2 text-right whitespace-nowrap">
+      <td data-label="Date" class="px-3 py-2">${esc(countTitle(c))}</td><td data-label="Outlet" class="px-3 py-2 text-slate-300">${esc(c.outlet_name)}</td>
+      <td data-label="Status" class="px-3 py-2">${c.status === "completed" ? '<span class="text-emerald-400">Completed</span>' : '<span class="text-amber-400">Open</span>'}</td>
+      <td data-label="Total" class="px-3 py-2 text-right num">${inr(c.total_value)}</td>
+      <td data-label="" class="px-3 py-2 text-right whitespace-nowrap">
         <button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>
         <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ml-3">Export</a>
         ${admin ? `<button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button>` : ""}</td></tr>`).join("")
@@ -674,8 +674,14 @@ async function renderMasters(retainPage) {
   let m; try { m = await api("/api/masters"); } catch (e) { return shell(`<div class="text-slate-400">${esc(e.message)}</div>`); }
   const card = (title, count, io, body) => `<div class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4">
     <div class="flex items-center justify-between mb-3"><div class="text-sm font-medium">${title} <span class="text-slate-500">(${count})</span></div>${io}</div>${body}</div>`;
-  const tbl = (head, rows) => `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-slate-400 text-xs uppercase"><tr>${head.map((h) => `<th class="text-left px-2 py-1.5">${h}</th>`).join("")}</tr></thead>
-    <tbody class="divide-y divide-slate-800">${rows || `<tr><td class="px-2 py-4 text-slate-500" colspan="${head.length}">Empty — add below or import.</td></tr>`}</tbody></table></div>`;
+  const tbl = (head, rows) => {
+    // Auto-label each <td> from the header row so cells become readable cards on mobile (.rcard)
+    let ci = 0;
+    const labeled = (rows || `<tr><td class="px-2 py-4 text-slate-500" colspan="${head.length}">Empty — add below or import.</td></tr>`)
+      .replace(/<t([rd])\b/g, (_m, t) => { if (t === "r") { ci = 0; return "<tr"; } const l = String(head[ci++] || "").replace(/"/g, ""); return `<td data-label="${l}"`; });
+    return `<div class="overflow-x-auto"><table class="w-full text-sm rcard"><thead class="text-slate-400 text-xs uppercase"><tr>${head.map((h) => `<th class="text-left px-2 py-1.5">${h}</th>`).join("")}</tr></thead>
+    <tbody class="divide-y divide-slate-800">${labeled}</tbody></table></div>`;
+  };
 
   const ings = [...m.items.map((i) => i.name), ...m.recipes.map((r) => r.name)];
   const ITEMS_PER_PAGE = 5;
@@ -1091,8 +1097,8 @@ function renderBarcodes() {
       <div id="ba-msg" class="text-xs text-slate-500 mt-2"></div>
     </div>
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px]"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase"><tr><th class="text-left px-3 py-2">Item</th><th class="text-left px-3 py-2">Unit</th><th class="text-left px-3 py-2">Label</th><th class="px-3 py-2"></th></tr></thead>
-      <tbody class="divide-y divide-slate-800">${items.map((i) => `<tr><td class="px-3 py-2">${esc(i.name)}<div class="font-mono text-[10px] text-slate-500">${esc(i.barcode || "no barcode")}</div></td><td class="px-3 py-2 font-mono text-xs ${i.barcode ? "" : "text-slate-600"}">${esc(i.unit)}</td><td class="px-3 py-2">${i.barcode ? `<canvas data-thumb="${esc(i.barcode)}" class="bg-white rounded p-0.5"></canvas>` : '<span class="text-slate-600 text-xs">—</span>'}</td><td class="px-3 py-2 text-right whitespace-nowrap">${i.barcode ? `<button data-bcdl="${i.id}" class="text-emerald-300 text-xs">Download</button>` : `<button data-bcgen="${i.id}" class="text-sky-300 text-xs">Generate</button>`}<button data-bcedit='${esc(JSON.stringify({ id: i.id, name: i.name, barcode: i.barcode }))}' class="text-amber-300 text-xs ml-2">Edit</button>${i.barcode ? `<button data-bcclear="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Clear</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No items. Add items in Masters first.</td></tr>`}</tbody></table></div></div>`);
+      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px] rcard"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase"><tr><th class="text-left px-3 py-2">Item</th><th class="text-left px-3 py-2">Unit</th><th class="text-left px-3 py-2">Label</th><th class="px-3 py-2"></th></tr></thead>
+      <tbody class="divide-y divide-slate-800">${items.map((i) => `<tr><td data-label="Item" class="px-3 py-2">${esc(i.name)}<div class="font-mono text-[10px] text-slate-500">${esc(i.barcode || "no barcode")}</div></td><td data-label="Unit" class="px-3 py-2 font-mono text-xs ${i.barcode ? "" : "text-slate-600"}">${esc(i.unit)}</td><td data-label="Label" class="px-3 py-2">${i.barcode ? `<canvas data-thumb="${esc(i.barcode)}" class="bg-white rounded p-0.5"></canvas>` : '<span class="text-slate-600 text-xs">—</span>'}</td><td data-label="" class="px-3 py-2 text-right whitespace-nowrap">${i.barcode ? `<button data-bcdl="${i.id}" class="text-emerald-300 text-xs">Download</button>` : `<button data-bcgen="${i.id}" class="text-sky-300 text-xs">Generate</button>`}<button data-bcedit='${esc(JSON.stringify({ id: i.id, name: i.name, barcode: i.barcode }))}' class="text-amber-300 text-xs ml-2">Edit</button>${i.barcode ? `<button data-bcclear="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Clear</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No items. Add items in Masters first.</td></tr>`}</tbody></table></div></div>`);
   app.querySelectorAll("canvas[data-thumb]").forEach((c) => drawBarcode(c, c.dataset.thumb, { height: 34, fontSize: 11, margin: 4 }));
   wireImports();
 
@@ -1165,9 +1171,9 @@ async function renderOutlets() {
     </div>
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mt-4">
       <div class="px-4 py-3 text-sm font-medium border-b border-slate-800">Outlet logins</div>
-      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[380px]"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase"><tr><th class="text-left px-3 py-2">Username</th><th class="text-left px-3 py-2">Name</th><th class="text-left px-3 py-2">Outlet</th><th></th></tr></thead>
-      <tbody class="divide-y divide-slate-800">${users.map((u) => `<tr><td class="px-3 py-2 font-mono text-xs">${esc(u.username)}</td><td class="px-3 py-2 text-slate-300">${esc(u.name || "")}</td><td class="px-3 py-2 text-slate-400">${esc(u.outlet_name || "—")}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap"><button data-pw="${u.id}" class="text-amber-300 text-xs">Reset pw</button><button data-del="${u.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button></td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No logins yet.</td></tr>`}</tbody></table></div>
+      <div class="overflow-x-auto"><table class="w-full text-sm min-w-[380px] rcard"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase"><tr><th class="text-left px-3 py-2">Username</th><th class="text-left px-3 py-2">Name</th><th class="text-left px-3 py-2">Outlet</th><th></th></tr></thead>
+      <tbody class="divide-y divide-slate-800">${users.map((u) => `<tr><td data-label="Username" class="px-3 py-2 font-mono text-xs">${esc(u.username)}</td><td data-label="Name" class="px-3 py-2 text-slate-300">${esc(u.name || "")}</td><td data-label="Outlet" class="px-3 py-2 text-slate-400">${esc(u.outlet_name || "—")}</td>
+        <td data-label="" class="px-3 py-2 text-right whitespace-nowrap"><button data-pw="${u.id}" class="text-amber-300 text-xs">Reset pw</button><button data-del="${u.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button></td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No logins yet.</td></tr>`}</tbody></table></div>
     </div>`);
   $("o-add").onclick = async () => { try { await api("/api/outlets", { method: "POST", body: JSON.stringify({ name: $("o-name").value }) }); toast("Outlet added"); renderOutlets(); } catch (e) { toast(e.message, true); } };
   $("u-add2").onclick = async () => {
