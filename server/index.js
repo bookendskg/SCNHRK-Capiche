@@ -9,7 +9,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 
-const { supabase, DATA_DIR, factor, baseOf, itemCostPerBase, recomputeAllRecipeCosts, ensureAdmin } = require("./db");
+const { supabase, DATA_DIR, factor, baseOf, itemCostPerBase, resolveRecipeCost, recomputeAllRecipeCosts, ensureAdmin } = require("./db");
 const { buildTemplate, importMasters, importOne, exportOne, exportCount, exportMasters, MASTERS } = require("./excel");
 
 const app = express();
@@ -93,19 +93,13 @@ app.get("/api/catalog", auth, wr(async (req, res) => {
 
 /* ---- masters ---- */
 app.get("/api/masters", auth, adminOnly, wr(async (req, res) => {
-  const [{ data: items }, { data: categories }, { data: containers }, { data: recipesRaw }, { data: lines }] = await Promise.all([
+  const [{ data: items }, { data: categories }, { data: containers }, { data: recipesRaw }] = await Promise.all([
     supabase.from("items").select("*").order("name"),
     supabase.from("categories").select("*").order("name"),
     supabase.from("containers").select("*").order("name"),
-    supabase.from("recipes").select("*").order("name"),
-    supabase.from("recipe_lines").select("recipe_id,ingredient,qty"),
+    supabase.from("recipes").select("*, lines:recipe_lines(ingredient,qty)").order("name"),
   ]);
-  const byRecipe = {};
-  for (const ln of lines || []) {
-    if (!byRecipe[ln.recipe_id]) byRecipe[ln.recipe_id] = [];
-    byRecipe[ln.recipe_id].push({ ingredient: ln.ingredient, qty: ln.qty });
-  }
-  const recipes = (recipesRaw || []).map((r) => ({ ...r, lines: byRecipe[r.id] || [] }));
+  const recipes = (recipesRaw || []).map((r) => ({ ...r, lines: r.lines || [] }));
   res.json({ items: items || [], categories: categories || [], containers: containers || [], recipes });
 }));
 
@@ -160,6 +154,16 @@ app.post("/api/masters/:type/import", auth, adminOnly, upload.single("file"), wr
 }));
 
 /* ---- recipe CRUD ---- */
+app.get("/api/recipes/:id", auth, adminOnly, wr(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const [{ data: recipe }, { data: lines }] = await Promise.all([
+    supabase.from("recipes").select("*").eq("id", id).single(),
+    supabase.from("recipe_lines").select("ingredient,qty").eq("recipe_id", id).order("id"),
+  ]);
+  if (!recipe) return res.status(404).json({ error: "Recipe not found" });
+  res.json({ ...recipe, lines: lines || [] });
+}));
+
 app.post("/api/recipes", auth, adminOnly, wr(async (req, res) => {
   const name = String(req.body.name || "").trim();
   const yield_qty = parseFloat(req.body.yield_qty) || 0;
@@ -179,21 +183,37 @@ app.post("/api/recipes", auth, adminOnly, wr(async (req, res) => {
     .filter((ln) => ln.ingredient);
   if (lineRows.length) await supabase.from("recipe_lines").insert(lineRows);
 
+  const cpb = await resolveRecipeCost(name);
+  if (cpb > 0) await supabase.from("recipes").update({ cost_per_base: cpb }).eq("id", newR.id);
   await recomputeAllRecipeCosts();
-  const { data: r } = await supabase.from("recipes").select("*").eq("id", newR.id).single();
-  const { data: rlines } = await supabase.from("recipe_lines").select("*").eq("recipe_id", r.id);
-  const [{ data: allItems }, { data: allRecipes }] = await Promise.all([
-    supabase.from("items").select("name"),
-    supabase.from("recipes").select("name"),
-  ]);
-  const itemNames = new Set((allItems || []).map((i) => i.name.toLowerCase()));
-  const recipeNames = new Set((allRecipes || []).map((i) => i.name.toLowerCase()));
-  const warnings = [];
-  for (const ln of rlines || []) {
-    if (!itemNames.has(ln.ingredient.toLowerCase()) && !recipeNames.has(ln.ingredient.toLowerCase()))
-      warnings.push(`Ingredient "${ln.ingredient}" isn't in Items or Recipes — counted as ₹0.`);
+  res.json({ id: newR.id, name, yield_qty, base_unit, warnings: [] });
+}));
+
+app.put("/api/recipes/:id", auth, adminOnly, wr(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const name = String(req.body.name || "").trim();
+  const yield_qty = parseFloat(req.body.yield_qty) || 0;
+  const base_unit = String(req.body.base_unit || "g").trim();
+  const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (!name) return res.status(400).json({ error: "Recipe name is required" });
+  if (!yield_qty) return res.status(400).json({ error: "Yield must be greater than zero" });
+  const lineRows = lines
+    .map((ln) => ({ recipe_id: id, ingredient: String(ln.ingredient || "").trim(), qty: parseFloat(ln.qty) || 0 }))
+    .filter((ln) => ln.ingredient);
+  if (!lineRows.length) return res.status(400).json({ error: "At least one ingredient is required" });
+  console.log(`[PUT /api/recipes/${id}] updating with ${lineRows.length} lines:`, lineRows.map(l => l.ingredient).join(", "));
+  await supabase.from("recipes").update({ name, yield_qty, base_unit }).eq("id", id);
+  await supabase.from("recipe_lines").delete().eq("recipe_id", id);
+  const { data: inserted, error: insertErr } = await supabase.from("recipe_lines").insert(lineRows).select();
+  if (insertErr || !inserted || inserted.length !== lineRows.length) {
+    console.error(`[PUT /api/recipes/${id}] insert failed — error:`, insertErr, "inserted:", inserted?.length, "expected:", lineRows.length);
+    return res.status(500).json({ error: `Ingredient save failed — expected ${lineRows.length} lines but got ${inserted?.length ?? 0}` });
   }
-  res.json({ ...r, warnings });
+  console.log(`[PUT /api/recipes/${id}] saved ${inserted.length} lines OK`);
+  const cpb = await resolveRecipeCost(name);
+  await supabase.from("recipes").update({ cost_per_base: cpb }).eq("id", id);
+  await recomputeAllRecipeCosts();
+  res.json({ id, name, yield_qty, base_unit, cost_per_base: cpb, savedLines: inserted.length });
 }));
 
 app.delete("/api/recipes/:id", auth, adminOnly, wr(async (req, res) => {
@@ -204,9 +224,15 @@ app.delete("/api/recipes/:id", auth, adminOnly, wr(async (req, res) => {
 }));
 
 /* ---- item CRUD ---- */
+function normalizeUnit(u) {
+  const v = (String(u || "").trim() || "gm").toLowerCase();
+  if (v === "g" || v === "gram" || v === "grams") return "gm";
+  if (v === "l" || v === "litre" || v === "liter") return "ltr";
+  return v;
+}
 function itemPayload(b) {
   const name = String(b.name || "").trim();
-  const unit = String(b.unit || "g").trim() || "g";
+  const unit = normalizeUnit(b.unit);
   const pack_qty = parseFloat(b.pack_qty) || 1;
   const price = parseFloat(b.price) || 0;
   return { name, category: String(b.category || "").trim(), unit, pack_qty, price, barcode: String(b.barcode || "").trim(), base_unit: baseOf(unit), cost_per_base: itemCostPerBase(price, unit, pack_qty) };
@@ -250,7 +276,8 @@ app.put("/api/items/:id/barcode", auth, adminOnly, wr(async (req, res) => {
 app.post("/api/containers", auth, adminOnly, wr(async (req, res) => {
   const name = String(req.body.name || "").trim(); const tare = parseFloat(req.body.tare) || 0;
   if (!name) return res.status(400).json({ error: "Name required" });
-  const { data: r, error } = await supabase.from("containers").insert({ name, tare }).select().single();
+  const unit = (String(req.body.unit || "g").trim() || "g").toLowerCase();
+  const { data: r, error } = await supabase.from("containers").insert({ name, tare, unit }).select().single();
   if (error) return res.status(400).json({ error: "A container with that name exists" });
   res.json(r);
 }));
@@ -261,10 +288,25 @@ app.delete("/api/containers/:id", auth, adminOnly, wr(async (req, res) => {
 
 app.put("/api/containers/:id", auth, adminOnly, wr(async (req, res) => {
   const name = String(req.body.name || "").trim(); const tare = parseFloat(req.body.tare) || 0;
+  const unit = (String(req.body.unit || "g").trim() || "g").toLowerCase();
   if (!name) return res.status(400).json({ error: "Name required" });
-  const { error } = await supabase.from("containers").update({ name, tare }).eq("id", req.params.id);
+  const { error } = await supabase.from("containers").update({ name, tare, unit }).eq("id", req.params.id);
   if (error) return res.status(400).json({ error: "A container with that name exists" });
-  res.json({ id: parseInt(req.params.id, 10), name, tare });
+  res.json({ id: parseInt(req.params.id, 10), name, tare, unit });
+}));
+
+app.delete("/api/masters/clear", auth, adminOnly, wr(async (req, res) => {
+  const type = req.query.type;
+  if (!["items", "recipes", "containers", "categories"].includes(type))
+    return res.status(400).json({ error: "Invalid type" });
+  if (type === "recipes") {
+    await supabase.from("recipe_lines").delete().gt("id", 0);
+    await supabase.from("recipes").delete().gt("id", 0);
+  } else {
+    await supabase.from(type).delete().gt("id", 0);
+  }
+  if (type === "items") await recomputeAllRecipeCosts();
+  res.json({ ok: true });
 }));
 
 app.post("/api/categories", auth, adminOnly, wr(async (req, res) => {
@@ -504,5 +546,10 @@ app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(PUB, "index.html"))
 
 const PORT = process.env.PORT || 8080;
 ensureAdmin()
-  .then(() => app.listen(PORT, () => console.log(`Mise running on http://localhost:${PORT}`)))
+  .then(() => app.listen(PORT, () => {
+    console.log(`Mise running on http://localhost:${PORT}`);
+    recomputeAllRecipeCosts()
+      .then(() => console.log("[startup] recipe costs refreshed"))
+      .catch((e) => console.error("[startup] cost refresh failed:", e.message));
+  }))
   .catch((err) => { console.error("Startup failed:", err); process.exit(1); });

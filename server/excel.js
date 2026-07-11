@@ -135,6 +135,27 @@ async function exportOne(type, useLive) {
   wb.creator = "Mise";
   const rows = useLive ? await def.live() : null;
   addSheet(wb, def, rows && rows.length ? rows : def.sample.slice(0, 0));
+
+  if (type === "recipes" && useLive) {
+    const { data: rcs } = await supabase.from("recipes").select("name, yield_qty, base_unit, cost_per_base").order("name");
+    const ws2 = wb.addWorksheet("Recipe Costs");
+    ws2.columns = [
+      { header: "recipe", key: "recipe", width: 30 },
+      { header: "yield", key: "yield", width: 10 },
+      { header: "base_unit", key: "base_unit", width: 10 },
+      { header: "cost_per_unit", key: "cost_per_unit", width: 16 },
+      { header: "total_batch_cost", key: "total_batch_cost", width: 18 },
+    ];
+    styleHeader(ws2.getRow(1));
+    for (const [i, r] of (rcs || []).entries()) {
+      const total = (r.cost_per_base || 0) * (r.yield_qty || 0);
+      const row = ws2.addRow([r.name, r.yield_qty, r.base_unit, r.cost_per_base || 0, total]);
+      if (i % 2) row.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } }; });
+    }
+    ws2.getColumn("cost_per_unit").numFmt = "₹#,##0.00";
+    ws2.getColumn("total_batch_cost").numFmt = "₹#,##0.00";
+  }
+
   return wb.xlsx.writeBuffer();
 }
 
@@ -161,6 +182,58 @@ async function firstSheetRows(buffer, preferredName) {
   return readSheet(ws);
 }
 
+async function computeAndSaveRecipeCosts(insertedRecipes, allLineRows) {
+  if (!insertedRecipes.length) return;
+  // Paginate to bypass Supabase's 1000-row server cap
+  const allItems = [];
+  for (let off = 0; ; off += 1000) {
+    const { data } = await supabase.from("items").select("name, cost_per_base").range(off, off + 999);
+    if (!data || !data.length) break;
+    allItems.push(...data);
+    if (data.length < 1000) break;
+  }
+  const itemCostMap = new Map();
+  for (const it of allItems) itemCostMap.set(it.name.trim().toLowerCase(), it.cost_per_base || 0);
+
+  const linesByRecipeId = new Map();
+  for (const ln of allLineRows) {
+    if (!linesByRecipeId.has(ln.recipe_id)) linesByRecipeId.set(ln.recipe_id, []);
+    linesByRecipeId.get(ln.recipe_id).push(ln);
+  }
+  const recipeByName = new Map();
+  for (const r of insertedRecipes) recipeByName.set(r.name.trim().toLowerCase(), r);
+
+  const costCache = new Map();
+  function resolve(name, seen = new Set()) {
+    const key = name.trim().toLowerCase();
+    if (costCache.has(key)) return costCache.get(key);
+    if (seen.has(key)) return 0;
+    seen.add(key);
+    const r = recipeByName.get(key);
+    if (!r) return 0;
+    let total = 0;
+    for (const ln of linesByRecipeId.get(r.id) || []) {
+      const ingKey = ln.ingredient.trim().toLowerCase();
+      if (itemCostMap.has(ingKey)) total += itemCostMap.get(ingKey) * ln.qty;
+      else total += resolve(ln.ingredient, new Set(seen)) * ln.qty;
+    }
+    const cost = r.yield_qty > 0 ? total / r.yield_qty : 0;
+    costCache.set(key, cost);
+    return cost;
+  }
+
+  const updates = insertedRecipes.map((r) => ({ id: r.id, cost_per_base: resolve(r.name) }));
+  const nonZero = updates.filter((u) => u.cost_per_base > 0);
+  console.log(`[computeRecipeCosts] ${updates.length} recipes, ${nonZero.length} with non-zero cost, items loaded: ${itemCostMap.size}`);
+  // Parallel updates in batches of 50 — more reliable than upsert
+  for (let i = 0; i < updates.length; i += 50) {
+    await Promise.all(updates.slice(i, i + 50).map((u) =>
+      supabase.from("recipes").update({ cost_per_base: u.cost_per_base }).eq("id", u.id)
+    ));
+  }
+  console.log(`[computeRecipeCosts] done`);
+}
+
 async function importOne(type, buffer) {
   const def = MASTERS[type];
   if (!def) throw new Error("Unknown master: " + type);
@@ -176,7 +249,7 @@ async function importOne(type, buffer) {
     const itemRows = [];
     for (const r of rows) {
       const name = str(r.name); if (!name) continue;
-      const unit = str(r.unit) || "g", pack = num(r.pack_qty) || 1, price = num(r.price);
+      const unit = str(r.unit).toLowerCase() || "g", pack = num(r.pack_qty) || 1, price = num(r.price);
       const cat = str(r.category);
       if (cat && !catSet.has(cat)) { newCats.push({ name: cat }); catSet.add(cat); }
       itemRows.push({ name, category: cat, unit, pack_qty: pack, price, barcode: str(r.barcode), base_unit: baseOf(unit), cost_per_base: itemCostPerBase(price, unit, pack) });
@@ -205,24 +278,40 @@ async function importOne(type, buffer) {
       if (num(r.yield) && !g.yield_qty) g.yield_qty = num(r.yield);
       const ing = str(r.ingredient); if (ing) g.lines.push({ ingredient: ing, qty: num(r.qty) });
     }
-    for (const [name, g] of groups) {
-      const { data: newR } = await supabase.from("recipes").insert({ name, yield_qty: g.yield_qty, base_unit: g.base_unit }).select().single();
-      if (g.lines.length) await supabase.from("recipe_lines").insert(g.lines.map((ln) => ({ recipe_id: newR.id, ingredient: ln.ingredient, qty: ln.qty })));
-      n++;
+    // Batch insert all recipes (chunked to stay under Supabase row limits)
+    const recipeRows = [...groups.keys()].map((name) => {
+      const g = groups.get(name);
+      return { name, yield_qty: g.yield_qty, base_unit: g.base_unit };
+    });
+    const insertedRecipes = [];
+    for (let i = 0; i < recipeRows.length; i += 500) {
+      const { data } = await supabase.from("recipes").insert(recipeRows.slice(i, i + 500)).select();
+      insertedRecipes.push(...(data || []));
     }
-    await recomputeAllRecipeCosts();
-    const { data: allR } = await supabase.from("recipes").select("*");
-    const { data: allLines } = await supabase.from("recipe_lines").select("*");
+    n = insertedRecipes.length;
+    // Batch insert all lines
+    const allLineRows = [];
+    for (const newR of insertedRecipes) {
+      const g = groups.get(newR.name);
+      if (g && g.lines.length) allLineRows.push(...g.lines.map((ln) => ({ recipe_id: newR.id, ingredient: ln.ingredient, qty: ln.qty })));
+    }
+    for (let i = 0; i < allLineRows.length; i += 500) {
+      await supabase.from("recipe_lines").insert(allLineRows.slice(i, i + 500));
+    }
+    // Compute and save costs in-memory — fast, no per-recipe round-trips
+    await computeAndSaveRecipeCosts(insertedRecipes, allLineRows);
+    // Validation warnings
     const { data: allItems } = await supabase.from("items").select("name");
     const { data: allRecipes } = await supabase.from("recipes").select("name");
     const itemNames = new Set((allItems || []).map((i) => i.name.toLowerCase()));
     const recipeNames = new Set((allRecipes || []).map((i) => i.name.toLowerCase()));
-    for (const r of allR || []) {
+    const seenIngredients = new Set(allLineRows.map((ln) => ln.ingredient.toLowerCase()));
+    for (const r of insertedRecipes) {
       if (!r.yield_qty) warnings.push(`Recipe "${r.name}" has no yield — cost can't be calculated.`);
     }
-    for (const ln of allLines || []) {
-      if (!itemNames.has(ln.ingredient.toLowerCase()) && !recipeNames.has(ln.ingredient.toLowerCase()))
-        warnings.push(`Recipe ingredient "${ln.ingredient}" not found in Items or Recipes.`);
+    for (const ing of seenIngredients) {
+      if (!itemNames.has(ing) && !recipeNames.has(ing))
+        warnings.push(`Ingredient "${ing}" not found in Items or Recipes.`);
     }
   } else if (type === "barcodes") {
     for (const r of rows) {
@@ -262,7 +351,7 @@ async function importMasters(buffer) {
   const iRows = [];
   for (const r of itemRows) {
     const name = str(r.name); if (!name) continue;
-    const unit = str(r.unit) || "g", pack = num(r.pack_qty) || 1, price = num(r.price);
+    const unit = str(r.unit).toLowerCase() || "g", pack = num(r.pack_qty) || 1, price = num(r.price);
     iRows.push({ name, category: str(r.category), unit, pack_qty: pack, price, barcode: str(r.barcode), base_unit: baseOf(unit), cost_per_base: itemCostPerBase(price, unit, pack) });
   }
   if (iRows.length) await supabase.from("items").insert(iRows);
@@ -273,7 +362,7 @@ async function importMasters(buffer) {
   if (cRows.length) await supabase.from("containers").insert(cRows);
   const nCont = cRows.length;
 
-  // Recipes
+  // Recipes — batch insert all at once
   const groups = new Map();
   for (const r of recRows) {
     const name = str(r.recipe); if (!name) continue;
@@ -282,13 +371,25 @@ async function importMasters(buffer) {
     if (num(r.yield) && !g.yield_qty) g.yield_qty = num(r.yield);
     const ing = str(r.ingredient); if (ing) g.lines.push({ ingredient: ing, qty: num(r.qty) });
   }
-  let nRec = 0;
-  for (const [name, g] of groups) {
-    const { data: newR } = await supabase.from("recipes").insert({ name, yield_qty: g.yield_qty, base_unit: g.base_unit }).select().single();
-    if (g.lines.length) await supabase.from("recipe_lines").insert(g.lines.map((ln) => ({ recipe_id: newR.id, ingredient: ln.ingredient, qty: ln.qty })));
-    nRec++;
+  const recipeRows = [...groups.keys()].map((name) => {
+    const g = groups.get(name);
+    return { name, yield_qty: g.yield_qty, base_unit: g.base_unit };
+  });
+  const insertedRecipes = [];
+  for (let i = 0; i < recipeRows.length; i += 500) {
+    const { data } = await supabase.from("recipes").insert(recipeRows.slice(i, i + 500)).select();
+    insertedRecipes.push(...(data || []));
   }
-  await recomputeAllRecipeCosts();
+  const nRec = insertedRecipes.length;
+  const allLineRows = [];
+  for (const newR of insertedRecipes) {
+    const g = groups.get(newR.name);
+    if (g && g.lines.length) allLineRows.push(...g.lines.map((ln) => ({ recipe_id: newR.id, ingredient: ln.ingredient, qty: ln.qty })));
+  }
+  for (let i = 0; i < allLineRows.length; i += 500) {
+    await supabase.from("recipe_lines").insert(allLineRows.slice(i, i + 500));
+  }
+  await computeAndSaveRecipeCosts(insertedRecipes, allLineRows);
   return { nItems, nCont, nRec, nCat, warnings };
 }
 

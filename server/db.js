@@ -52,12 +52,66 @@ async function resolveRecipeCost(recipeName, seen = new Set()) {
   return r.yield_qty > 0 ? total / r.yield_qty : 0;
 }
 
-async function recomputeAllRecipeCosts() {
-  const { data: recipes } = await supabase.from("recipes").select("name");
-  for (const r of recipes || []) {
-    const cpb = await resolveRecipeCost(r.name);
-    await supabase.from("recipes").update({ cost_per_base: cpb }).ilike("name", r.name);
+async function fetchAllRows(table, columns) {
+  const PAGE = 1000;
+  const all = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.from(table).select(columns).range(offset, offset + PAGE - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    all.push(...data);
+    if (data.length < PAGE) break;
+    offset += PAGE;
   }
+  return all;
+}
+
+async function recomputeAllRecipeCosts() {
+  const [recipes, lines, items] = await Promise.all([
+    fetchAllRows("recipes", "id, name, yield_qty"),
+    fetchAllRows("recipe_lines", "recipe_id, ingredient, qty"),
+    fetchAllRows("items", "name, cost_per_base"),
+  ]);
+  if (!recipes || !recipes.length) return;
+
+  const itemCostMap = new Map();
+  for (const it of items || []) itemCostMap.set(it.name.trim().toLowerCase(), it.cost_per_base || 0);
+
+  const linesByRecipeId = new Map();
+  for (const ln of lines || []) {
+    if (!linesByRecipeId.has(ln.recipe_id)) linesByRecipeId.set(ln.recipe_id, []);
+    linesByRecipeId.get(ln.recipe_id).push(ln);
+  }
+  const recipeByName = new Map();
+  for (const r of recipes) recipeByName.set(r.name.trim().toLowerCase(), r);
+
+  const costCache = new Map();
+  function resolve(name, seen = new Set()) {
+    const key = name.trim().toLowerCase();
+    if (costCache.has(key)) return costCache.get(key);
+    if (seen.has(key)) return 0;
+    seen.add(key);
+    const r = recipeByName.get(key);
+    if (!r) return 0;
+    let total = 0;
+    for (const ln of linesByRecipeId.get(r.id) || []) {
+      const ingKey = ln.ingredient.trim().toLowerCase();
+      if (itemCostMap.has(ingKey)) total += itemCostMap.get(ingKey) * ln.qty;
+      else total += resolve(ln.ingredient, new Set(seen)) * ln.qty;
+    }
+    const cost = r.yield_qty > 0 ? total / r.yield_qty : 0;
+    costCache.set(key, cost);
+    return cost;
+  }
+
+  const updates = recipes.map((r) => ({ id: r.id, cost_per_base: resolve(r.name) }));
+  for (let i = 0; i < updates.length; i += 50) {
+    await Promise.all(updates.slice(i, i + 50).map((u) =>
+      supabase.from("recipes").update({ cost_per_base: u.cost_per_base }).eq("id", u.id)
+    ));
+  }
+  console.log(`[recomputeAllRecipeCosts] updated ${updates.length} recipes`);
 }
 
 async function ensureAdmin() {

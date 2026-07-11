@@ -27,6 +27,13 @@ const api = async (url, opts = {}) => {
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const inr = (n) => "₹" + (Math.round((+n + Number.EPSILON) * 100) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inr0 = (n) => "₹" + Math.round(+n || 0).toLocaleString("en-IN");
+const inrPerBase = (r) => {
+  const c = +r.cost_per_base || 0;
+  const bu = (r.base_unit || "").toLowerCase();
+  if (bu === "g" || bu === "gm") return inr(c * 1000) + "/kg";
+  if (bu === "ml") return inr(c * 1000) + "/ltr";
+  return inr(c) + "/" + (bu || "unit");
+};
 const qf = (n) => (Math.round((+n + Number.EPSILON) * 100) / 100).toLocaleString("en-IN");
 const thisPeriod = () => new Date().toISOString().slice(0, 7);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -56,6 +63,7 @@ const I = {
   down: '<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
   plus: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>',
+  edit: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
 };
 
 /* ============================ Login ============================ */
@@ -148,6 +156,7 @@ const KIND_STYLE = {
   notinmaster: { emoji: "❓", active: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30", text: "text-rose-300" },
 };
 let saveTimer;
+let editingLineIdx = null;
 function scheduleSave() {
   clearTimeout(saveTimer);
   $("savestate") && ($("savestate").textContent = "Saving…");
@@ -160,6 +169,7 @@ async function saveNow() {
     CT.computed = r.lines; CT.current.total_value = r.total_value;
     $("savestate") && ($("savestate").textContent = "Saved");
     renderCountTotals();
+    renderLines();
   } catch (e) { $("savestate") && ($("savestate").textContent = "Save failed"); toast(e.message, true); }
 }
 
@@ -289,7 +299,7 @@ function containerSelect(id) {
     ${S.catalog.containers.map((c) => `<option value="${esc(c.name)}" data-tare="${c.tare}">${esc(c.name)} (tare ${c.tare})</option>`).join("")}</select>`;
 }
 
-const UNIT_OPTS = [["kg", "Kg"], ["g", "Grams"], ["ml", "Ml"], ["ltr", "Ltr"], ["pcs", "Pcs"], ["qty", "Qty"]];
+const UNIT_OPTS = [["kg", "Kg"], ["gm", "Gm"], ["ml", "Ml"], ["ltr", "Ltr"], ["pcs", "Pcs"], ["qty", "Qty"], ["box", "Box"]];
 const PACK_OPT = ["pack", "Pack"];
 function unitSelect(id, def, cls, opts) {
   opts = opts || UNIT_OPTS;
@@ -303,13 +313,49 @@ function baseUnitOf(name) {
   const r = S.catalog.recipes.find((x) => x.name.toLowerCase() === String(name || "").toLowerCase());
   return r ? r.base_unit : "g";
 }
-const unitDropdownDefault = (base) => (base === "pc" ? "pcs" : base);
+const unitDropdownDefault = (base) => base === "pc" ? "pcs" : base === "g" ? "gm" : base;
 const factorJS = (u) => { u = String(u || "").toLowerCase(); return (u === "kg" || u === "l" || u === "ltr" || u === "litre" || u === "liter") ? 1000 : 1; };
 const costOf = (name) => {
   const n = String(name || "").toLowerCase();
   const it = S.catalog.items.find((i) => i.name.toLowerCase() === n); if (it) return it.cost_per_base;
   const r = S.catalog.recipes.find((x) => x.name.toLowerCase() === n); return r ? r.cost_per_base : null;
 };
+function showImportWarnings(warnings) {
+  const existing = document.getElementById("warn-modal");
+  if (existing) existing.remove();
+  const missing = warnings
+    .map((w) => { const m = w.match(/Ingredient "([^"]+)"/); return m ? m[1] : null; })
+    .filter(Boolean);
+  const overlay = document.createElement("div");
+  overlay.id = "warn-modal";
+  overlay.className = "fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4";
+  overlay.innerHTML = `<div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 w-full max-w-lg max-h-[80vh] flex flex-col gap-3 shadow-xl">
+    <div class="flex items-center justify-between">
+      <span class="text-amber-300 font-semibold text-sm">⚠ Import Warnings (${warnings.length})</span>
+      <button id="wm-x" class="text-slate-400 hover:text-white">${I.x}</button>
+    </div>
+    <div class="overflow-y-auto flex-1 text-xs text-slate-300 space-y-0.5">
+      ${warnings.map((w) => `<div class="py-1 border-b border-slate-700/40">• ${esc(w)}</div>`).join("")}
+    </div>
+    <div class="flex gap-2 pt-1 border-t border-slate-700">
+      ${missing.length ? `<button id="wm-export" class="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg px-3 py-1.5 text-xs font-medium">${I.down} <span class="align-middle">Export ${missing.length} missing item${missing.length !== 1 ? "s" : ""}</span></button>` : ""}
+      <button id="wm-close" class="ml-auto bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-1.5 text-xs">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  document.getElementById("wm-x").onclick = close;
+  document.getElementById("wm-close").onclick = close;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  if (missing.length) {
+    document.getElementById("wm-export").onclick = () => {
+      const csv = "name\n" + missing.map((n) => `"${n.replace(/"/g, '""')}"`).join("\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = "missing_items.csv"; a.click();
+    };
+  }
+}
 function mImport(type) {
   const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".xlsx,.xls";
   inp.onchange = async () => {
@@ -320,7 +366,7 @@ function mImport(type) {
       const d = await r.json(); if (!r.ok) throw new Error(d.error || "Import failed");
       S.catalog = await api("/api/catalog");
       toast(`Imported ${d.count} ${type}` + (d.warnings && d.warnings.length ? ` · ${d.warnings.length} warning(s)` : ""));
-      if (d.warnings && d.warnings.length) alert("Import warnings:\n\n" + d.warnings.join("\n"));
+      if (d.warnings && d.warnings.length) showImportWarnings(d.warnings);
       route();
     } catch (e) { toast(e.message, true); }
   };
@@ -333,7 +379,9 @@ function wireImports() { app.querySelectorAll("[data-imp]").forEach((b) => (b.on
 
 function addLine(line) {
   if (!line.ref_name) { toast("Pick or type a product", true); return; }
-  CT.lines.push(line); renderLines(); scheduleSave(); toast("Added to count");
+  CT.lines.push(line);
+  CT.computed.push({});
+  renderLines(); scheduleSave(); toast("Added to count");
 }
 
 function renderAddPanel() {
@@ -349,7 +397,7 @@ function renderAddPanel() {
         </div><button id="bc-cam" class="bg-slate-800 px-3 rounded-lg">${I.cam}</button></div>
         <div id="bc-video"></div>
         <div id="bc-match" class="text-sm text-slate-400">Or search by name:</div>
-        ${searchBox("u-name", "Item name", itemsPool, () => updUNet())}
+        ${searchBox("u-name", "Item name", itemsPool, (nm) => { autoSetUnit(nm); updUNet(); })}
         <div><label class="text-xs text-slate-400">Quantity</label>
           <div class="flex gap-2">
             <input id="u-qty" type="number" inputmode="decimal" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5">
@@ -366,15 +414,33 @@ function renderAddPanel() {
       const baseU = baseUnitOf($("u-name").value);
       el.textContent = (u === "kg" || u === "ltr") ? `= ${qf(q * factorJS(u))} ${baseU} · valued at unit cost` : "Valued at unit cost";
     };
+    const unitAliases = { g: "g", gm: "gm", kg: "kg", ml: "ml", l: "ltr", ltr: "ltr", liter: "ltr", litre: "ltr", pcs: "pcs", pc: "pcs", piece: "pcs", qty: "qty", box: "box", pack: "pack" };
+    const autoSetUnit = (nm) => {
+      const it = S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase());
+      const sel = $("u-unit");
+      if (!sel) return;
+      if (!it || !it.unit) {
+        // Restore full options (including pack) when name is cleared
+        if (![...sel.options].some((o) => o.value === "pack"))
+          sel.innerHTML = [PACK_OPT, ...UNIT_OPTS].map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+        return;
+      }
+      const target = unitAliases[(it.unit || "").toLowerCase()] || (it.unit || "").toLowerCase();
+      // For non-pack items, rebuild dropdown without "pack" so it can't be selected
+      const isPack = target === "pack";
+      const opts = isPack ? [PACK_OPT, ...UNIT_OPTS] : UNIT_OPTS;
+      sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+      if ([...sel.options].some((o) => o.value === target)) sel.value = target;
+    };
     const onBarcode = (code) => {
       const it = S.catalog.items.find((i) => (i.barcode || "") === code.trim());
-      if (it) { $("u-name").value = it.name; $("bc-match").innerHTML = `<span class="text-emerald-400">Matched: ${esc(it.name)}</span>`; $("u-qty").focus(); }
+      if (it) { $("u-name").value = it.name; $("bc-match").innerHTML = `<span class="text-emerald-400">Matched: ${esc(it.name)}</span>`; autoSetUnit(it.name); $("u-qty").focus(); }
       else $("bc-match").innerHTML = `<span class="text-amber-400">No item with barcode ${esc(code)} — search by name or use "Not in master".</span>`;
     };
     $("bc").onkeydown = (e) => { if (e.key === "Enter" && $("bc").value.trim()) { onBarcode($("bc").value); $("bc").value = ""; } };
     $("bc-cam").onclick = () => startCamera($("bc-video"), (code) => onBarcode(code));
     $("u-qty").oninput = updUNet; $("u-unit").onchange = updUNet; updUNet();
-    $("u-add").onclick = () => { addLine({ kind: "unopened", ref_name: $("u-name").value.trim(), qty: parseFloat($("u-qty").value) || 0, unit: $("u-unit").value }); $("u-name").value = ""; $("u-qty").value = ""; $("u-unit").value = "pack"; updUNet(); };
+    $("u-add").onclick = () => { addLine({ kind: "unopened", ref_name: $("u-name").value.trim(), qty: parseFloat($("u-qty").value) || 0, unit: $("u-unit").value }); $("u-name").value = ""; $("u-qty").value = ""; const sel = $("u-unit"); if (sel) { sel.innerHTML = [PACK_OPT, ...UNIT_OPTS].map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); sel.value = "pack"; } updUNet(); };
     return;
   }
   if (k === "opened" || k === "processed") {
@@ -385,7 +451,8 @@ function renderAddPanel() {
       const q = parseFloat(($(k + "-qty") || {}).value) || 0;
       const u = (($(k + "-unit") || {}).value) || "g";
       const base = q * factorJS(u);
-      const baseU = baseUnitOf($(k + "-name").value);
+      const lu = u.toLowerCase();
+      const baseU = ["kg", "g", "gm"].includes(lu) ? "gm" : ["l", "ltr", "ml"].includes(lu) ? "ml" : baseUnitOf($(k + "-name").value);
       if (hasC) {
         const tare = parseFloat(cont.selectedOptions[0].dataset.tare) || 0;
         el.textContent = `Container tare ${tare} → net ${qf(Math.max(0, base - tare))} ${baseU}`;
@@ -453,11 +520,24 @@ function renderLines() {
   wrap.innerHTML = `<div class="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800">
     ${CT.lines.map((l, i) => {
       const cp = CT.computed[i] || {};
-      const inU = cp.in_unit, inQ = cp.in_qty;
       const ks = KIND_STYLE[l.kind] || KIND_STYLE.unopened;
+      if (i === editingLineIdx) {
+        return `<div class="px-3 py-2.5 space-y-2">
+          <div class="text-sm text-slate-100">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${ks.emoji} ${kindLabel[l.kind]}</span></div>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="le-qty" type="number" inputmode="decimal" value="${l.qty != null ? l.qty : ""}" class="w-28 bg-slate-950 border border-amber-500/50 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40">
+            <select id="le-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${[PACK_OPT, ...UNIT_OPTS].map(([v, lbl]) => `<option value="${v}"${v === l.unit ? " selected" : ""}>${lbl}</option>`).join("")}</select>
+            <button data-lsave="${i}" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-xs">Save</button>
+            <button data-lcancel class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">Cancel</button>
+          </div>
+        </div>`;
+      }
+      const inU = cp.in_unit, inQ = cp.in_qty;
       let detail;
       if (l.container_name) {
-        detail = `${esc(l.container_name)} · gross ${qf(inQ != null ? inQ : 0)} ${esc(inU || "")} → net ${qf(cp.qty || 0)} ${esc(cp.unit || "")}`;
+        const inUL = (inU || "").toLowerCase();
+        const netU = ["kg", "g", "gm"].includes(inUL) ? "gm" : ["l", "ltr", "ml"].includes(inUL) ? "ml" : (cp.unit || "");
+        detail = `${esc(l.container_name)} · gross ${qf(inQ != null ? inQ : 0)} ${esc(inU || "")} → net ${qf(cp.qty || 0)} ${netU}`;
       } else if (l.kind === "unopened" && (!inU || inU === "pack")) {
         detail = `${qf(cp.qty != null ? cp.qty : l.qty || 0)} pack(s)`;
       } else if (inU && inQ != null) {
@@ -469,12 +549,33 @@ function renderLines() {
       return `<div class="flex items-center justify-between px-3 py-2.5">
         <div class="min-w-0"><div class="text-sm text-slate-100 truncate">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${ks.emoji} ${kindLabel[l.kind]}</span></div>
           <div class="text-xs text-slate-500 truncate">${detail}</div></div>
-        <div class="flex items-center gap-3 shrink-0">
+        <div class="flex items-center gap-2 shrink-0">
           <div class="text-sm num ${l.kind === "notinmaster" ? "text-slate-600" : "text-amber-300"}">${l.kind === "notinmaster" ? "—" : inr(cp.value || 0)}</div>
-          <button data-del="${i}" class="text-slate-600 hover:text-red-400">${I.trash}</button></div>
+          <button data-edit="${i}" class="text-slate-500 hover:text-amber-300" title="Edit qty">${I.edit}</button>
+          <button data-del="${i}" class="text-slate-600 hover:text-red-400">${I.trash}</button>
+        </div>
       </div>`;
     }).join("")}</div>`;
-  wrap.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { CT.lines.splice(+b.dataset.del, 1); renderLines(); scheduleSave(); }));
+  wrap.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => {
+    const idx = +b.dataset.del;
+    CT.lines.splice(idx, 1); CT.computed.splice(idx, 1);
+    if (editingLineIdx === idx) editingLineIdx = null;
+    else if (editingLineIdx !== null && editingLineIdx > idx) editingLineIdx--;
+    renderLines(); scheduleSave();
+  }));
+  wrap.querySelectorAll("[data-edit]").forEach((b) => (b.onclick = () => {
+    editingLineIdx = +b.dataset.edit; renderLines();
+    setTimeout(() => { const el = $("le-qty"); if (el) { el.focus(); el.select(); } }, 0);
+  }));
+  wrap.querySelectorAll("[data-lsave]").forEach((b) => (b.onclick = () => {
+    const i = +b.dataset.lsave;
+    const v = parseFloat($("le-qty").value);
+    if (!isNaN(v) && v >= 0) CT.lines[i].qty = v;
+    const uEl = $("le-unit"); if (uEl) CT.lines[i].unit = uEl.value;
+    editingLineIdx = null; renderLines(); scheduleSave();
+  }));
+  const lc = wrap.querySelector("[data-lcancel]");
+  if (lc) lc.onclick = () => { editingLineIdx = null; renderLines(); };
 }
 
 async function startCamera(container, onCode) {
@@ -565,8 +666,11 @@ function renderUpload() {
 
 /* ============================ Admin: Masters view ============================ */
 let masterPage = 0;
+let masterRecipePage = 0;
+let masterContPage = 0;
+let masterCatPage = 0;
 async function renderMasters(retainPage) {
-  if (!retainPage) masterPage = 0;
+  if (!retainPage) { masterPage = 0; masterRecipePage = 0; masterContPage = 0; masterCatPage = 0; }
   let m; try { m = await api("/api/masters"); } catch (e) { return shell(`<div class="text-slate-400">${esc(e.message)}</div>`); }
   const card = (title, count, io, body) => `<div class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4">
     <div class="flex items-center justify-between mb-3"><div class="text-sm font-medium">${title} <span class="text-slate-500">(${count})</span></div>${io}</div>${body}</div>`;
@@ -574,19 +678,30 @@ async function renderMasters(retainPage) {
     <tbody class="divide-y divide-slate-800">${rows || `<tr><td class="px-2 py-4 text-slate-500" colspan="${head.length}">Empty — add below or import.</td></tr>`}</tbody></table></div>`;
 
   const ings = [...m.items.map((i) => i.name), ...m.recipes.map((r) => r.name)];
+  const ITEMS_PER_PAGE = 5;
+  const clearBtn = (type) => `<button data-clearall="${type}" class="bg-red-900/40 hover:bg-red-800/60 text-red-300 rounded-lg px-3 py-1.5 text-xs ml-2">Clear all</button>`;
 
   shell(`
     <p class="text-sm text-slate-400 mb-4">Each master has its own Excel <b>Export</b> and <b>Import</b>. Importing replaces that master (Barcodes only updates barcodes on matching items).</p>
 
-    ${card("Items", m.items.length, ieButtons("items"),
-      `<div id="it-table-wrap"></div>` +
+    ${card("Items", m.items.length, ieButtons("items") + clearBtn("items"),
+      `<div class="flex flex-wrap gap-2 mb-3">
+        <input id="it-search" placeholder="Search by name or category…" class="flex-1 min-w-[9rem] bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+        <select id="it-cat-filter" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">All categories</option>
+          ${m.categories.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("")}
+        </select>
+        <button id="it-search-btn" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-sm">Search</button>
+        <button id="it-clear-filter" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-sm">Clear all</button>
+      </div>
+      <div id="it-table-wrap"></div>` +
       `<div class="mt-3 border-t border-slate-800 pt-3">
         <div id="it-mode" class="text-xs text-amber-300 mb-2">Add a new item</div>
         <datalist id="it-cats">${m.categories.map((c) => `<option value="${esc(c.name)}">`).join("")}</datalist>
         <div class="grid sm:grid-cols-3 gap-2 mb-2">
           <input id="it-name" placeholder="Name" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
           <input id="it-cat" list="it-cats" placeholder="Category" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
-          <select id="it-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${["ml", "ltr", "kg", "gm", "box", "qty", "pcs", "pack", "g", "l", "piece"].map((u) => `<option value="${u}">${u}</option>`).join("")}</select>
+          <select id="it-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${["ml", "ltr", "kg", "gm", "box", "qty", "pcs", "pack", "l", "piece"].map((u) => `<option value="${u}">${u}</option>`).join("")}</select>
           <input id="it-pack" type="number" inputmode="decimal" placeholder="Pack qty (units per pack)" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
           <input id="it-price" type="number" inputmode="decimal" placeholder="Price per pack" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
           <input id="it-bc" placeholder="Barcode (optional)" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
@@ -594,17 +709,19 @@ async function renderMasters(retainPage) {
         <div class="flex gap-2"><button id="it-save" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-1.5 text-sm">Save item</button><button id="it-clear" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-sm">Clear</button></div>
       </div>`)}
 
-    ${card("Recipes", m.recipes.length, ieButtons("recipes"),
-      tbl(["Recipe", "Yield", "Cost/unit", "Ingredients", ""],
-        m.recipes.map((r) => `<tr><td class="px-2 py-1.5">${esc(r.name)}</td><td class="px-2 py-1.5 num">${qf(r.yield_qty)} ${esc(r.base_unit)}</td><td class="px-2 py-1.5 num text-amber-300">${inr(r.cost_per_base)}/${esc(r.base_unit)}</td><td class="px-2 py-1.5 text-slate-400 text-xs">${r.lines.map((l) => esc(l.ingredient) + " " + qf(l.qty)).join(", ")}</td><td class="px-2 py-1.5 text-right"><button data-recedit='${esc(JSON.stringify(r))}' class="text-amber-300 text-xs">Edit</button><button data-recdel="${r.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")))}
+    ${card("Recipes", m.recipes.length, ieButtons("recipes") + clearBtn("recipes"),
+      `<input id="rec-search" placeholder="Search recipes…" class="w-full mb-2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><div id="recipe-table-wrap"></div>`)}
 
     <div class="bg-slate-900 border border-amber-800/40 rounded-xl p-4 mb-4">
-      <div class="text-sm font-medium mb-1 text-amber-300">Add / update a recipe</div>
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-sm font-medium text-amber-300">Add / update a recipe</div>
+        <div id="rb-mode" class="text-xs text-slate-400">New recipe</div>
+      </div>
       <p class="text-xs text-slate-400 mb-3">Cost is calculated live from your Items prices. Example — Orange sauce: Red sauce 300 g, Garlic 50 g, Olive oil 20 g.</p>
       <div class="grid sm:grid-cols-3 gap-2 mb-3">
         <input id="rb-name" placeholder="Recipe name" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
         <input id="rb-yield" type="number" inputmode="decimal" placeholder="Batch yield" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
-        ${unitSelect("rb-unit", "g")}
+        ${unitSelect("rb-unit", "gm")}
       </div>
       <datalist id="rb-ings">${ings.map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
       <div id="rb-rows" class="space-y-2 mb-2"></div>
@@ -614,35 +731,63 @@ async function renderMasters(retainPage) {
         <button id="rb-ex2" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">Example: Sugar syrup</button>
       </div>
       <div id="rb-cost" class="text-sm mb-3 text-slate-400"></div>
-      <button id="rb-save" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2 text-sm">Save recipe</button>
+      <div class="flex gap-2"><button id="rb-save" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2 text-sm">Save recipe</button><button id="rb-clear" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-4 py-2 text-sm">Clear</button></div>
     </div>
 
     <div class="grid sm:grid-cols-2 gap-4">
-      ${card("Containers", m.containers.length, ieButtons("containers"),
-        tbl(["Name", "Tare", ""], m.containers.map((c) => `<tr><td class="px-2 py-1.5">${esc(c.name)}</td><td class="px-2 py-1.5 num">${c.tare}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-contedit='${esc(JSON.stringify(c))}' class="text-amber-300 text-xs">Edit</button><button data-contdel="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) +
-        `<div class="flex gap-2 mt-3"><input id="ct-name" placeholder="Name" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><input id="ct-tare" type="number" placeholder="Tare" class="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><button id="ct-add" class="bg-amber-500 text-slate-950 rounded-lg px-3 text-sm">${I.plus}</button></div>`)}
+      ${card("Containers", m.containers.length, ieButtons("containers") + clearBtn("containers"),
+        `<input id="cont-search" placeholder="Search containers…" class="w-full mb-2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><div id="cont-table-wrap"></div>` +
+        `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+          <input id="ct-name" placeholder="Name" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+          <input id="ct-tare" type="number" placeholder="Tare weight" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+          <select id="ct-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${["ml","ltr","kg","gm"].map((u) => `<option value="${u}">${u}</option>`).join("")}</select>
+          <div class="flex gap-2"><button id="ct-add" class="flex-1 bg-amber-500 text-slate-950 rounded-lg px-3 text-sm">${I.plus} Add</button><button id="ct-clear" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 text-sm">Clear</button></div>
+        </div>`)}
 
-      ${card("Categories", m.categories.length, ieButtons("categories"),
-        tbl(["Name", ""], m.categories.map((c) => `<tr><td class="px-2 py-1.5">${esc(c.name)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-catedit='${esc(JSON.stringify(c))}' class="text-amber-300 text-xs">Edit</button><button data-catdel="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) +
-        `<div class="flex gap-2 mt-3"><input id="cat-name" placeholder="New category" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><button id="cat-add" class="bg-amber-500 text-slate-950 rounded-lg px-3 text-sm">${I.plus}</button></div>`)}
+      ${card("Categories", m.categories.length, ieButtons("categories") + clearBtn("categories"),
+        `<input id="cat-search" placeholder="Search categories…" class="w-full mb-2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><div id="cat-table-wrap"></div>` +
+        `<div class="flex gap-2 mt-3"><input id="cat-name" placeholder="New category" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm"><button id="cat-add" class="bg-amber-500 text-slate-950 rounded-lg px-3 text-sm">${I.plus}</button><button id="cat-clear" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 text-sm">Clear</button></div>`)}
     </div>`);
 
   wireImports();
 
+  app.querySelectorAll("[data-clearall]").forEach((b) => (b.onclick = async () => {
+    const typed = prompt(`This will permanently delete ALL ${b.dataset.clearall}.\n\nType DELETE to confirm:`);
+    if (typed !== "DELETE") return;
+    try {
+      await api("/api/masters/clear?type=" + b.dataset.clearall, { method: "DELETE" });
+      S.catalog = await api("/api/catalog");
+      toast(`All ${b.dataset.clearall} cleared`);
+      renderMasters();
+    } catch (e) { toast(e.message, true); }
+  }));
+
   /* ----- recipe builder behaviour ----- */
+  let editRecipeId = null;
   const rowsBox = $("rb-rows");
+  const setRecipeMode = (recipe) => {
+    editRecipeId = recipe ? recipe.id : null;
+    $("rb-mode").textContent = recipe ? `Editing: ${recipe.name}` : "New recipe";
+    $("rb-save").textContent = recipe ? "Update recipe" : "Save recipe";
+  };
   function recompute() {
-    const yq = parseFloat($("rb-yield").value) || 0; let batch = 0; const unknown = [];
+    const yq = parseFloat($("rb-yield").value) || 0;
+    const yqUnit = $("rb-unit").value;
+    const yqBase = yq * factorJS(yqUnit);
+    let batch = 0; const unknown = [];
     rowsBox.querySelectorAll(".rb-row").forEach((row) => {
       const ing = row.querySelector(".rb-ing").value.trim(); if (!ing) return;
       const q = parseFloat(row.querySelector(".rb-qty").value) || 0;
       const u = row.querySelector(".rb-u").value;
       const c = costOf(ing);
+      const costEl = row.querySelector(".rb-row-cost");
+      if (costEl) costEl.textContent = c != null && q > 0 ? inr(q * factorJS(u) * c) : "";
       if (c == null) { unknown.push(ing); return; }
       batch += q * factorJS(u) * c;
     });
-    const per = yq > 0 ? batch / yq : 0;
-    $("rb-cost").innerHTML = `Batch cost <b class="text-amber-300">${inr(batch)}</b> · cost/unit <b class="text-amber-300">${inr(per)}/${esc($("rb-unit").value)}</b>` +
+    const per = yqBase > 0 ? batch / yqBase : 0;
+    const perLabel = ["ml", "ltr", "l"].includes(yqUnit.toLowerCase()) ? "ml" : "gm";
+    $("rb-cost").innerHTML = `Batch cost <b class="text-amber-300">${inr(batch)}</b> · cost/unit <b class="text-amber-300">${inr(per)}/${perLabel}</b>` +
       (unknown.length ? ` · <span class="text-amber-400">not priced: ${esc(unknown.join(", "))}</span>` : "");
   }
   function addRow(ing, qty, u) {
@@ -650,7 +795,8 @@ async function renderMasters(retainPage) {
     row.className = "rb-row flex flex-wrap gap-2";
     row.innerHTML = `<input class="rb-ing flex-1 min-w-[8rem] bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm" list="rb-ings" placeholder="Ingredient (item or recipe)" value="${esc(ing || "")}">
       <input class="rb-qty w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm" type="number" inputmode="decimal" placeholder="Qty" value="${qty != null ? qty : ""}">
-      ${unitSelect("", u || "g", "rb-u")}
+      ${unitSelect("", u || "gm", "rb-u")}
+      <span class="rb-row-cost text-xs text-slate-400 self-center w-16 text-right tabular-nums"></span>
       <button class="rb-del text-slate-600 hover:text-red-400 px-1">${I.x}</button>`;
     rowsBox.appendChild(row);
     row.querySelectorAll("input,select").forEach((el) => (el.oninput = recompute));
@@ -659,12 +805,16 @@ async function renderMasters(retainPage) {
   }
   $("rb-addrow").onclick = () => addRow();
   $("rb-yield").oninput = recompute; $("rb-unit").oninput = recompute;
-  const loadExample = (name, yq, rows) => { $("rb-name").value = name; $("rb-yield").value = yq; $("rb-unit").value = "g"; rowsBox.innerHTML = ""; rows.forEach((r) => addRow(r[0], r[1], r[2])); };
-  $("rb-ex1").onclick = () => loadExample("Orange sauce", 370, [["Red sauce", 300, "g"], ["Garlic", 50, "g"], ["Olive oil", 20, "g"]]);
-  $("rb-ex2").onclick = () => loadExample("Sugar syrup", 130, [["Sugar", 100, "g"], ["Water", 20, "g"], ["Citric acid", 10, "g"]]);
+  const loadExample = (name, yq, bu, rows) => { $("rb-name").value = name; $("rb-yield").value = yq; $("rb-unit").value = bu === "ml" ? "ml" : "gm"; rowsBox.innerHTML = ""; rows.forEach((r) => addRow(r[0], r[1], r[2])); if (!rows.length) addRow(); };
+  $("rb-ex1").onclick = () => { setRecipeMode(null); loadExample("Orange sauce", 370, "g", [["Red sauce", 300, "gm"], ["Garlic", 50, "gm"], ["Olive oil", 20, "ml"]]); };
+  $("rb-ex2").onclick = () => { setRecipeMode(null); loadExample("Sugar syrup", 130, "g", [["Sugar", 100, "gm"], ["Water", 20, "ml"], ["Citric acid", 10, "gm"]]); };
   addRow();
   $("rb-save").onclick = async () => {
-    const name = $("rb-name").value.trim(); const yq = parseFloat($("rb-yield").value) || 0;
+    const name = $("rb-name").value.trim();
+    const rawYq = parseFloat($("rb-yield").value) || 0;
+    const yqUnit = $("rb-unit").value;
+    const yq = rawYq * factorJS(yqUnit);
+    const base_unit = ["ml", "ltr", "l"].includes(yqUnit.toLowerCase()) ? "ml" : "g";
     if (!name) return toast("Recipe name required", true);
     if (!yq) return toast("Yield must be more than zero", true);
     const lines = [];
@@ -674,30 +824,71 @@ async function renderMasters(retainPage) {
       const u = row.querySelector(".rb-u").value;
       lines.push({ ingredient: ing, qty: q * factorJS(u) });
     });
+    if (!lines.length) return toast("Add at least one ingredient", true);
+    const saveBtn = $("rb-save"); saveBtn.disabled = true; saveBtn.textContent = "Saving…";
     try {
-      const r = await api("/api/recipes", { method: "POST", body: JSON.stringify({ name, yield_qty: yq, base_unit: $("rb-unit").value, lines }) });
+      const url = editRecipeId ? "/api/recipes/" + editRecipeId : "/api/recipes";
+      const method = editRecipeId ? "PUT" : "POST";
+      const r = await api(url, { method, body: JSON.stringify({ name, yield_qty: yq, base_unit, lines }) });
       S.catalog = await api("/api/catalog");
-      toast(`Saved "${name}" — ${inr(r.cost_per_base)}/${r.base_unit}`);
-      if (r.warnings && r.warnings.length) alert("Saved with notes:\n\n" + r.warnings.join("\n"));
-      renderMasters();
-    } catch (e) { toast(e.message, true); }
+      const linesCount = r && r.savedLines != null ? r.savedLines : lines.length;
+      const savedMsg = editRecipeId ? `Updated "${name}" — ${linesCount} ingredient${linesCount !== 1 ? "s" : ""} saved` : `Recipe "${name}" saved`;
+      const warnings = r && r.warnings && r.warnings.length ? r.warnings : [];
+      editRecipeId = null;
+      saveBtn.disabled = false; saveBtn.textContent = "Save recipe";
+      toast(savedMsg);
+      if (warnings.length) alert("Saved with notes:\n\n" + warnings.join("\n"));
+      await renderMasters(true);
+      const rt = $("recipe-table-wrap"); if (rt) rt.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) { toast(e.message, true); saveBtn.disabled = false; saveBtn.textContent = editRecipeId ? "Update recipe" : "Save recipe"; }
   };
+  $("rb-clear").onclick = () => { setRecipeMode(null); $("rb-name").value = ""; $("rb-yield").value = ""; $("rb-unit").value = "gm"; rowsBox.innerHTML = ""; addRow(); };
 
-  app.querySelectorAll("[data-recedit]").forEach((b) => (b.onclick = () => {
-    const r = JSON.parse(b.dataset.recedit);
-    loadExample(r.name, r.yield_qty, r.lines.map((l) => [l.ingredient, l.qty, r.base_unit]));
-    $("rb-name").scrollIntoView({ behavior: "smooth", block: "center" });
-  }));
-  app.querySelectorAll("[data-recdel]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this recipe?")) return; await api("/api/recipes/" + b.dataset.recdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(); }));
+  /* ----- recipes table with pagination ----- */
+  const REC_PER_PAGE = 2;
+  const renderRecipesTable = (page) => {
+    const wrap = $("recipe-table-wrap"); if (!wrap) return;
+    const q = (($("rec-search") || {}).value || "").trim().toLowerCase();
+    const filtered = q ? m.recipes.filter((r) => r.name.toLowerCase().includes(q)) : m.recipes;
+    const start = page * REC_PER_PAGE;
+    const slice = filtered.slice(start, start + REC_PER_PAGE);
+    const totalPages = Math.ceil(filtered.length / REC_PER_PAGE);
+    const pager = (filtered.length > REC_PER_PAGE || totalPages > 1) ? `<div class="flex items-center justify-between mt-2 px-1 text-xs text-slate-400">
+      <span>${filtered.length === 0 ? "No recipes found" : `${start + 1}–${Math.min(start + REC_PER_PAGE, filtered.length)} of ${filtered.length} recipes`}</span>
+      <div class="flex gap-1.5">
+        <button id="rec-prev" ${page === 0 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
+        <button id="rec-next" ${page >= totalPages - 1 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
+      </div>
+    </div>` : "";
+    wrap.innerHTML = tbl(["Recipe", "Yield", "Cost/unit", "Total", "Ingredients", ""],
+      slice.map((r) => {
+        const total = (r.cost_per_base || 0) * (r.yield_qty || 0);
+        return `<tr><td class="px-2 py-1.5">${esc(r.name)}</td><td class="px-2 py-1.5 num">${qf(r.yield_qty)} ${esc(r.base_unit)}</td><td class="px-2 py-1.5 num text-amber-300">${inr(r.cost_per_base)}/${esc(r.base_unit)}</td><td class="px-2 py-1.5 num text-slate-300">${inr(total)}</td><td class="px-2 py-1.5 text-slate-400 text-xs">${r.lines.map((l) => esc(l.ingredient) + " " + qf(l.qty)).join(", ")}</td><td class="px-2 py-1.5 text-right"><button data-recid="${r.id}" class="text-amber-300 text-xs">Edit</button><button data-recdel="${r.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`;
+      }).join("")) + pager;
+    wrap.querySelectorAll("[data-recid]").forEach((b) => (b.onclick = async () => {
+      try {
+        const r = await api("/api/recipes/" + b.dataset.recid);
+        const ingUnit = r.base_unit === "ml" ? "ml" : "gm";
+        setRecipeMode(r);
+        loadExample(r.name, r.yield_qty, r.base_unit, (r.lines || []).map((l) => [l.ingredient, l.qty, ingUnit]));
+        $("rb-name").scrollIntoView({ behavior: "smooth", block: "center" });
+        $("rb-name").focus();
+      } catch (e) { toast(e.message, true); }
+    }));
+    wrap.querySelectorAll("[data-recdel]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this recipe?")) return; await api("/api/recipes/" + b.dataset.recdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(); }));
+    if ($("rec-prev")) $("rec-prev").onclick = () => { masterRecipePage = page - 1; renderRecipesTable(masterRecipePage); };
+    if ($("rec-next")) $("rec-next").onclick = () => { masterRecipePage = page + 1; renderRecipesTable(masterRecipePage); };
+  };
+  renderRecipesTable(masterRecipePage);
+  $("rec-search").oninput = () => { masterRecipePage = 0; renderRecipesTable(0); };
 
   /* ----- item table with pagination ----- */
-  const ITEMS_PER_PAGE = 10;
   let editItemId = null;
   const fillItem = (it) => {
     editItemId = it ? it.id : null;
     $("it-name").value = it ? it.name : "";
     $("it-cat").value = it ? (it.category || "") : "";
-    $("it-unit").value = it ? it.unit : "ml";
+    $("it-unit").value = it ? (it.unit || "ml").toLowerCase() : "ml";
     $("it-pack").value = it ? it.pack_qty : "";
     $("it-price").value = it ? it.price : "";
     $("it-bc").value = it ? (it.barcode || "") : "";
@@ -705,61 +896,135 @@ async function renderMasters(retainPage) {
   };
   const renderItemsTable = (page) => {
     const wrap = $("it-table-wrap"); if (!wrap) return;
+    const q = (($("it-search") || {}).value || "").trim().toLowerCase();
+    const cat = (($("it-cat-filter") || {}).value || "");
+    let filtered = m.items;
+    if (q) filtered = filtered.filter((i) => i.name.toLowerCase().includes(q) || (i.category || "").toLowerCase().includes(q));
+    if (cat) filtered = filtered.filter((i) => i.category === cat);
     const start = page * ITEMS_PER_PAGE;
-    const slice = m.items.slice(start, start + ITEMS_PER_PAGE);
-    const totalPages = Math.ceil(m.items.length / ITEMS_PER_PAGE);
-    const pager = totalPages > 1 ? `<div class="flex items-center justify-between mt-2 px-1 text-xs text-slate-400">
-      <span>${start + 1}–${Math.min(start + ITEMS_PER_PAGE, m.items.length)} of ${m.items.length} items</span>
+    const slice = filtered.slice(start, start + ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+    const pager = (filtered.length > ITEMS_PER_PAGE || totalPages > 1) ? `<div class="flex items-center justify-between mt-2 px-1 text-xs text-slate-400">
+      <span>${filtered.length === 0 ? "No items found" : `${start + 1}–${Math.min(start + ITEMS_PER_PAGE, filtered.length)} of ${filtered.length} items`}</span>
       <div class="flex gap-1.5">
         <button id="it-prev" ${page === 0 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
         <button id="it-next" ${page >= totalPages - 1 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
       </div>
     </div>` : "";
     wrap.innerHTML = tbl(["Name", "Category", "Unit", "Pack", "Price", "Cost/base", "Barcode", ""],
-      slice.map((i) => `<tr><td class="px-2 py-1.5">${esc(i.name)}</td><td class="px-2 py-1.5 text-slate-400">${esc(i.category)}</td><td class="px-2 py-1.5">${esc(i.unit)}</td><td class="px-2 py-1.5 num">${i.pack_qty}</td><td class="px-2 py-1.5 num">${inr(i.price)}</td><td class="px-2 py-1.5 num text-amber-300">${inr(i.cost_per_base)}/${esc(i.base_unit)}</td><td class="px-2 py-1.5 font-mono text-xs">${esc(i.barcode)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-itemedit='${esc(JSON.stringify(i))}' class="text-amber-300 text-xs">Edit</button><button data-itemdel="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) + pager;
+      slice.map((i) => `<tr><td class="px-2 py-1.5">${esc(i.name)}</td><td class="px-2 py-1.5 text-slate-400">${esc(i.category)}</td><td class="px-2 py-1.5">${esc(i.unit)}</td><td class="px-2 py-1.5 num">${i.pack_qty}</td><td class="px-2 py-1.5 num">${inr(i.price)}</td><td class="px-2 py-1.5 num text-amber-300">${inrPerBase(i)}</td><td class="px-2 py-1.5 font-mono text-xs">${esc(i.barcode)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-itemedit='${esc(JSON.stringify(i))}' class="text-amber-300 text-xs">Edit</button><button data-itemdel="${i.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) + pager;
     wrap.querySelectorAll("[data-itemedit]").forEach((b) => (b.onclick = () => { fillItem(JSON.parse(b.dataset.itemedit)); $("it-name").scrollIntoView({ behavior: "smooth", block: "center" }); $("it-name").focus(); }));
     wrap.querySelectorAll("[data-itemdel]").forEach((b) => (b.onclick = async () => { if (!confirm("Delete this item?")) return; await api("/api/items/" + b.dataset.itemdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(true); }));
     if ($("it-prev")) $("it-prev").onclick = () => { masterPage = page - 1; renderItemsTable(masterPage); };
     if ($("it-next")) $("it-next").onclick = () => { masterPage = page + 1; renderItemsTable(masterPage); };
   };
   renderItemsTable(masterPage);
+  $("it-search-btn").onclick = () => { masterPage = 0; renderItemsTable(0); };
+  $("it-search").onkeydown = (e) => { if (e.key === "Enter") { masterPage = 0; renderItemsTable(0); } };
+  $("it-cat-filter").onchange = () => { masterPage = 0; renderItemsTable(0); };
+  $("it-clear-filter").onclick = () => { $("it-search").value = ""; $("it-cat-filter").value = ""; masterPage = 0; renderItemsTable(0); };
   $("it-name").oninput = () => {
     const nm = $("it-name").value.trim().toLowerCase();
     if (!nm || editItemId) return;
     const match = m.items.find((i) => i.name.toLowerCase() === nm);
-    if (match) { $("it-unit").value = match.unit; if (!$("it-cat").value) $("it-cat").value = match.category || ""; }
+    if (match) { $("it-unit").value = (match.unit || "ml").toLowerCase(); if (!$("it-cat").value) $("it-cat").value = match.category || ""; }
   };
   $("it-save").onclick = async () => {
     const body = { name: $("it-name").value, category: $("it-cat").value, unit: $("it-unit").value, pack_qty: $("it-pack").value, price: $("it-price").value, barcode: $("it-bc").value };
     if (!body.name.trim()) return toast("Item name required", true);
     try {
       await api(editItemId ? "/api/items/" + editItemId : "/api/items", { method: editItemId ? "PUT" : "POST", body: JSON.stringify(body) });
-      S.catalog = await api("/api/catalog"); toast(editItemId ? "Item updated" : "Item added"); renderMasters(true);
+      S.catalog = await api("/api/catalog");
+      const itMsg = editItemId ? "Item updated" : "Item added";
+      fillItem(null);
+      toast(itMsg);
+      await renderMasters(true);
     } catch (e) { toast(e.message, true); }
   };
   $("it-clear").onclick = () => fillItem(null);
 
-  /* ----- containers add / edit ----- */
+  /* ----- containers table with pagination ----- */
   let editContId = null;
+  const renderContainersTable = (page) => {
+    const wrap = $("cont-table-wrap"); if (!wrap) return;
+    const q = (($("cont-search") || {}).value || "").trim().toLowerCase();
+    const filtered = q ? m.containers.filter((c) => c.name.toLowerCase().includes(q)) : m.containers;
+    const start = page * ITEMS_PER_PAGE;
+    const slice = filtered.slice(start, start + ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+    const pager = (filtered.length > ITEMS_PER_PAGE || totalPages > 1) ? `<div class="flex items-center justify-between mt-2 px-1 text-xs text-slate-400">
+      <span>${filtered.length === 0 ? "No containers found" : `${start + 1}–${Math.min(start + ITEMS_PER_PAGE, filtered.length)} of ${filtered.length} containers`}</span>
+      <div class="flex gap-1.5">
+        <button id="cont-prev" ${page === 0 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
+        <button id="cont-next" ${page >= totalPages - 1 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
+      </div>
+    </div>` : "";
+    wrap.innerHTML = tbl(["Name", "Tare", "Unit", ""],
+      slice.map((c) => `<tr>
+        <td class="px-2 py-1.5">${esc(c.name)}</td>
+        <td class="px-2 py-1.5 num">${c.tare}</td>
+        <td class="px-2 py-1.5 text-slate-400 text-xs">${esc(c.unit || "g")}</td>
+        <td class="px-2 py-1.5 text-right whitespace-nowrap">
+          <button data-contedit='${esc(JSON.stringify(c))}' class="text-amber-300 text-xs">Edit</button>
+          <button data-contdel="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button>
+        </td>
+      </tr>`).join("")) + pager;
+    wrap.querySelectorAll("[data-contedit]").forEach((b) => (b.onclick = () => { const c = JSON.parse(b.dataset.contedit); editContId = c.id; $("ct-name").value = c.name; $("ct-tare").value = c.tare; $("ct-unit").value = (c.unit === "g" ? "gm" : c.unit) || "gm"; $("ct-name").focus(); }));
+    wrap.querySelectorAll("[data-contdel]").forEach((b) => (b.onclick = async () => { await api("/api/containers/" + b.dataset.contdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(); }));
+    if ($("cont-prev")) $("cont-prev").onclick = () => { masterContPage = page - 1; renderContainersTable(masterContPage); };
+    if ($("cont-next")) $("cont-next").onclick = () => { masterContPage = page + 1; renderContainersTable(masterContPage); };
+  };
+  renderContainersTable(masterContPage);
+  $("cont-search").oninput = () => { masterContPage = 0; renderContainersTable(0); };
+
   $("ct-add").onclick = async () => {
     try {
-      await api(editContId ? "/api/containers/" + editContId : "/api/containers", { method: editContId ? "PUT" : "POST", body: JSON.stringify({ name: $("ct-name").value, tare: $("ct-tare").value }) });
-      S.catalog = await api("/api/catalog"); renderMasters();
+      const ctMsg = editContId ? "Container updated" : "Container saved";
+      await api(editContId ? "/api/containers/" + editContId : "/api/containers", { method: editContId ? "PUT" : "POST", body: JSON.stringify({ name: $("ct-name").value, tare: $("ct-tare").value, unit: $("ct-unit").value }) });
+      S.catalog = await api("/api/catalog"); editContId = null;
+      $("ct-name").value = ""; $("ct-tare").value = ""; $("ct-unit").value = "gm";
+      toast(ctMsg);
+      await renderMasters(true);
     } catch (e) { toast(e.message, true); }
   };
-  app.querySelectorAll("[data-contedit]").forEach((b) => (b.onclick = () => { const c = JSON.parse(b.dataset.contedit); editContId = c.id; $("ct-name").value = c.name; $("ct-tare").value = c.tare; $("ct-name").focus(); }));
-  app.querySelectorAll("[data-contdel]").forEach((b) => (b.onclick = async () => { await api("/api/containers/" + b.dataset.contdel, { method: "DELETE" }); S.catalog = await api("/api/catalog"); renderMasters(); }));
+  $("ct-clear").onclick = () => { editContId = null; $("ct-name").value = ""; $("ct-tare").value = ""; $("ct-unit").value = "gm"; };
 
-  /* ----- categories add / edit ----- */
+  /* ----- categories table with pagination ----- */
   let editCatId = null;
+  const renderCatTable = (page) => {
+    const wrap = $("cat-table-wrap"); if (!wrap) return;
+    const q = (($("cat-search") || {}).value || "").trim().toLowerCase();
+    const filtered = q ? m.categories.filter((c) => c.name.toLowerCase().includes(q)) : m.categories;
+    const start = page * ITEMS_PER_PAGE;
+    const slice = filtered.slice(start, start + ITEMS_PER_PAGE);
+    const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+    const pager = (filtered.length > ITEMS_PER_PAGE || totalPages > 1) ? `<div class="flex items-center justify-between mt-2 px-1 text-xs text-slate-400">
+      <span>${filtered.length === 0 ? "No categories found" : `${start + 1}–${Math.min(start + ITEMS_PER_PAGE, filtered.length)} of ${filtered.length} categories`}</span>
+      <div class="flex gap-1.5">
+        <button id="cat-prev" ${page === 0 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
+        <button id="cat-next" ${page >= totalPages - 1 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
+      </div>
+    </div>` : "";
+    wrap.innerHTML = tbl(["Name", ""],
+      slice.map((c) => `<tr><td class="px-2 py-1.5">${esc(c.name)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-catedit='${esc(JSON.stringify(c))}' class="text-amber-300 text-xs">Edit</button><button data-catdel="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) + pager;
+    wrap.querySelectorAll("[data-catedit]").forEach((b) => (b.onclick = () => { const c = JSON.parse(b.dataset.catedit); editCatId = c.id; $("cat-name").value = c.name; $("cat-name").focus(); }));
+    wrap.querySelectorAll("[data-catdel]").forEach((b) => (b.onclick = async () => { await api("/api/categories/" + b.dataset.catdel, { method: "DELETE" }); renderMasters(); }));
+    if ($("cat-prev")) $("cat-prev").onclick = () => { masterCatPage = page - 1; renderCatTable(masterCatPage); };
+    if ($("cat-next")) $("cat-next").onclick = () => { masterCatPage = page + 1; renderCatTable(masterCatPage); };
+  };
+  renderCatTable(masterCatPage);
+  $("cat-search").oninput = () => { masterCatPage = 0; renderCatTable(0); };
+
   $("cat-add").onclick = async () => {
     try {
+      const catMsg = editCatId ? "Category updated" : "Category saved";
       await api(editCatId ? "/api/categories/" + editCatId : "/api/categories", { method: editCatId ? "PUT" : "POST", body: JSON.stringify({ name: $("cat-name").value }) });
-      renderMasters();
+      editCatId = null; $("cat-name").value = "";
+      toast(catMsg);
+      await renderMasters();
     } catch (e) { toast(e.message, true); }
   };
-  app.querySelectorAll("[data-catedit]").forEach((b) => (b.onclick = () => { const c = JSON.parse(b.dataset.catedit); editCatId = c.id; $("cat-name").value = c.name; $("cat-name").focus(); }));
-  app.querySelectorAll("[data-catdel]").forEach((b) => (b.onclick = async () => { await api("/api/categories/" + b.dataset.catdel, { method: "DELETE" }); renderMasters(); }));
+  $("cat-clear").onclick = () => { editCatId = null; $("cat-name").value = ""; };
 }
 
 /* ============================ Admin: Barcodes ============================ */

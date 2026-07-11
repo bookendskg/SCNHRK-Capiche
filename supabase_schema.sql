@@ -1,4 +1,5 @@
 -- Mise stock-count app — run this in the Supabase SQL Editor once
+-- Run this migration if upgrading: ALTER TABLE containers ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'g';
 
 CREATE TABLE IF NOT EXISTS outlets (
   id BIGSERIAL PRIMARY KEY,
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS containers (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
-  tare REAL NOT NULL DEFAULT 0
+  tare REAL NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'g'
 );
 
 CREATE TABLE IF NOT EXISTS recipes (
