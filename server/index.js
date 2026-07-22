@@ -9,7 +9,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 
-const { supabase, DATA_DIR, factor, baseOf, itemCostPerBase, resolveRecipeCost, recomputeAllRecipeCosts, ensureAdmin } = require("./db");
+const { supabase, DATA_DIR, factor, baseOf, itemCostPerBase, resolveRecipeCost, recomputeAllRecipeCosts, cleanEmptyCategories, ensureAdmin } = require("./db");
 const { buildTemplate, importMasters, importOne, exportOne, exportCount, exportMasters, MASTERS } = require("./excel");
 
 const app = express();
@@ -126,8 +126,10 @@ app.post("/api/masters/upload", auth, adminOnly, upload.single("file"), wr(async
 app.get("/api/masters/:type/export", auth, adminOnly, wr(async (req, res) => {
   const type = req.params.type;
   if (!MASTERS[type]) return res.status(404).send("Unknown master");
-  const buf = await exportOne(type, true);
-  res.setHeader("Content-Disposition", `attachment; filename="mise_${type}.xlsx"`);
+  const category = req.query.category ? String(req.query.category).trim() : null;
+  const buf = await exportOne(type, true, { category });
+  const catSuffix = category ? `_${category.replace(/[^a-zA-Z0-9]+/g, "_")}` : "";
+  res.setHeader("Content-Disposition", `attachment; filename="mise_${type}${catSuffix}.xlsx"`);
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.end(Buffer.from(buf));
 }));
@@ -149,8 +151,11 @@ app.post("/api/masters/:type/import", auth, adminOnly, upload.single("file"), wr
   const type = req.params.type;
   if (!MASTERS[type]) return res.status(404).json({ error: "Unknown master" });
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-  try { res.json(await importOne(type, req.file.buffer)); }
-  catch (e) { res.status(400).json({ error: "Could not read that file: " + e.message }); }
+  try {
+    const result = await importOne(type, req.file.buffer);
+    if (type === "items") await cleanEmptyCategories();
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: "Could not read that file: " + e.message }); }
 }));
 
 /* ---- recipe CRUD ---- */
@@ -254,13 +259,13 @@ app.put("/api/items/:id", auth, adminOnly, wr(async (req, res) => {
   if (p.category) await supabase.from("categories").upsert({ name: p.category }, { onConflict: "name", ignoreDuplicates: true });
   const { error } = await supabase.from("items").update(p).eq("id", req.params.id);
   if (error) return res.status(400).json({ error: "An item with that name already exists" });
-  await recomputeAllRecipeCosts();
+  await Promise.all([recomputeAllRecipeCosts(), cleanEmptyCategories()]);
   res.json({ id: parseInt(req.params.id, 10), ...p });
 }));
 
 app.delete("/api/items/:id", auth, adminOnly, wr(async (req, res) => {
   await supabase.from("items").delete().eq("id", req.params.id);
-  await recomputeAllRecipeCosts();
+  await Promise.all([recomputeAllRecipeCosts(), cleanEmptyCategories()]);
   res.json({ ok: true });
 }));
 
@@ -551,5 +556,8 @@ ensureAdmin()
     recomputeAllRecipeCosts()
       .then(() => console.log("[startup] recipe costs refreshed"))
       .catch((e) => console.error("[startup] cost refresh failed:", e.message));
+    cleanEmptyCategories()
+      .then(() => console.log("[startup] empty categories cleaned"))
+      .catch((e) => console.error("[startup] category cleanup failed:", e.message));
   }))
   .catch((err) => { console.error("Startup failed:", err); process.exit(1); });

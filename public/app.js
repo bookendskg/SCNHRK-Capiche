@@ -373,9 +373,20 @@ function mImport(type) {
   inp.click();
 }
 const ieButtons = (type) => `<div class="flex gap-2">
-  <a href="/api/masters/${type}/export" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">${I.down} <span class="align-middle">Export</span></a>
+  <button data-exp="${type}" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">${I.down} <span class="align-middle">Export</span></button>
   <button data-imp="${type}" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">Import</button></div>`;
-function wireImports() { app.querySelectorAll("[data-imp]").forEach((b) => (b.onclick = () => mImport(b.dataset.imp))); }
+function wireImports() {
+  app.querySelectorAll("[data-imp]").forEach((b) => (b.onclick = () => mImport(b.dataset.imp)));
+  app.querySelectorAll("[data-exp]").forEach((b) => (b.onclick = () => {
+    const type = b.dataset.exp;
+    let url = `/api/masters/${type}/export`;
+    if (type === "items") {
+      const cat = (($("it-cat-filter") || {}).value || "").trim();
+      if (cat) url += "?category=" + encodeURIComponent(cat);
+    }
+    window.location.href = url;
+  }));
+}
 
 function addLine(line) {
   if (!line.ref_name) { toast("Pick or type a product", true); return; }
@@ -1011,8 +1022,13 @@ async function renderMasters(retainPage) {
         <button id="cat-next" ${page >= totalPages - 1 ? "disabled" : ""} class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed">Next →</button>
       </div>
     </div>` : "";
-    wrap.innerHTML = tbl(["Name", ""],
-      slice.map((c) => `<tr><td class="px-2 py-1.5">${esc(c.name)}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-catedit='${esc(JSON.stringify(c))}' class="text-amber-300 text-xs">Edit</button><button data-catdel="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`).join("")) + pager;
+    const itemCountByCategory = {};
+    for (const it of m.items) itemCountByCategory[it.category || ""] = (itemCountByCategory[it.category || ""] || 0) + 1;
+    wrap.innerHTML = tbl(["Name", "Items", ""],
+      slice.map((c) => {
+        const count = itemCountByCategory[c.name] || 0;
+        return `<tr><td class="px-2 py-1.5">${esc(c.name)}</td><td class="px-2 py-1.5 num ${count === 0 ? "text-slate-600" : "text-slate-400"}">${count}</td><td class="px-2 py-1.5 text-right whitespace-nowrap"><button data-catedit='${esc(JSON.stringify(c))}' class="text-amber-300 text-xs">Edit</button><button data-catdel="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-2">Del</button></td></tr>`;
+      }).join("")) + pager;
     wrap.querySelectorAll("[data-catedit]").forEach((b) => (b.onclick = () => { const c = JSON.parse(b.dataset.catedit); editCatId = c.id; $("cat-name").value = c.name; $("cat-name").focus(); }));
     wrap.querySelectorAll("[data-catdel]").forEach((b) => (b.onclick = async () => { await api("/api/categories/" + b.dataset.catdel, { method: "DELETE" }); renderMasters(); }));
     if ($("cat-prev")) $("cat-prev").onclick = () => { masterCatPage = page - 1; renderCatTable(masterCatPage); };

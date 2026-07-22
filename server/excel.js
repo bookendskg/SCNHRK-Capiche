@@ -128,12 +128,15 @@ async function buildTemplate() {
   return wb;
 }
 
-async function exportOne(type, useLive) {
+async function exportOne(type, useLive, opts = {}) {
   const def = MASTERS[type];
   if (!def) throw new Error("Unknown master: " + type);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Mise";
-  const rows = useLive ? await def.live() : null;
+  let rows = useLive ? await def.live() : null;
+  if (type === "items" && useLive && opts.category) {
+    rows = (rows || []).filter((r) => r[1] === opts.category);
+  }
   addSheet(wb, def, rows && rows.length ? rows : def.sample.slice(0, 0));
 
   if (type === "recipes" && useLive) {

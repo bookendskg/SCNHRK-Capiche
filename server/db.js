@@ -114,6 +114,19 @@ async function recomputeAllRecipeCosts() {
   console.log(`[recomputeAllRecipeCosts] updated ${updates.length} recipes`);
 }
 
+async function cleanEmptyCategories() {
+  const [{ data: cats }, { data: items }] = await Promise.all([
+    supabase.from("categories").select("id, name"),
+    supabase.from("items").select("category"),
+  ]);
+  const used = new Set((items || []).map((i) => i.category).filter(Boolean));
+  const empty = (cats || []).filter((c) => !used.has(c.name));
+  if (empty.length) {
+    await supabase.from("categories").delete().in("id", empty.map((c) => c.id));
+    console.log(`[cleanEmptyCategories] removed ${empty.length}: ${empty.map((c) => c.name).join(", ")}`);
+  }
+}
+
 async function ensureAdmin() {
   const { count } = await supabase.from("users").select("id", { count: "exact", head: true }).eq("role", "admin");
   if (count > 0) return;
@@ -125,4 +138,4 @@ async function ensureAdmin() {
   try { fs.writeFileSync(path.join(DATA_DIR, "ADMIN_CREDENTIALS.txt"), msg); } catch {}
 }
 
-module.exports = { supabase, baseOf, factor, itemCostPerBase, resolveRecipeCost, recomputeAllRecipeCosts, ensureAdmin, DATA_DIR };
+module.exports = { supabase, baseOf, factor, itemCostPerBase, resolveRecipeCost, recomputeAllRecipeCosts, cleanEmptyCategories, ensureAdmin, DATA_DIR };
