@@ -612,7 +612,6 @@ async function startCamera(container, onCode) {
 /* ============================ Saved counts ============================ */
 async function renderCountsList() {
   let rows = []; try { rows = await api("/api/counts"); } catch {}
-  const admin = S.me.role === "admin";
   shell(`<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
     <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px] rcard"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase">
       <tr><th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Outlet</th><th class="text-left px-3 py-2">Status</th><th class="text-right px-3 py-2">Total</th><th></th></tr></thead>
@@ -624,7 +623,7 @@ async function renderCountsList() {
       <td data-label="" class="px-3 py-2 text-right whitespace-nowrap">
         <button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>
         <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ml-3">Export</a>
-        ${admin ? `<button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button>` : ""}</td></tr>`).join("")
+        <button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button></td></tr>`).join("")
       || `<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">No counts yet.</td></tr>`}
     </tbody></table></div></div>`);
   app.querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));

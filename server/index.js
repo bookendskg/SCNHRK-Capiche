@@ -534,7 +534,9 @@ app.post("/api/counts/:id/reopen", auth, adminOnly, wr(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete("/api/counts/:id", auth, adminOnly, wr(async (req, res) => {
+app.delete("/api/counts/:id", auth, wr(async (req, res) => {
+  const { data: c } = await supabase.from("counts").select("*").eq("id", req.params.id).maybeSingle();
+  if (!c || !canSeeCount(req.user, c)) return res.status(403).json({ error: "Not found or forbidden" });
   await supabase.from("counts").delete().eq("id", req.params.id);
   res.json({ ok: true });
 }));
