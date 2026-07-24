@@ -627,19 +627,25 @@ async function renderCountsList() {
         ${admin ? `<button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button>` : ""}</td></tr>`).join("")
       || `<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">No counts yet.</td></tr>`}
     </tbody></table></div></div>`);
-  app.querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(parseInt(b.dataset.outlet, 10), b.dataset.period)));
+  app.querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));
   app.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
     if (!confirm("Delete this count permanently?")) return;
     await api("/api/counts/" + b.dataset.del, { method: "DELETE" }); toast("Deleted"); renderCountsList();
   }));
 }
 
-async function continueCount(outlet_id, period) {
+async function continueCount(countId, outlet_id, period) {
   S.nav = "count";
   await renderCount();
   const op = $("cf-outlet"); if (op && outlet_id) op.value = String(outlet_id);
   const pp = $("cf-date"); if (pp && period) { pp.value = period + "-01"; const pm = $("cf-date-text"); if (pm) pm.value = dispDate(pp.value); }
-  openCount();
+  try {
+    const c = await api("/api/counts/" + countId);
+    CT.current = c; CT.computed = c.lines || [];
+    CT.lines = (c.lines || []).map((l) => ({ kind: l.kind, ref_name: l.ref_name, container_name: l.container_name, qty: (l.in_qty != null ? l.in_qty : l.qty), unit: l.in_unit || undefined, note: l.note }));
+    if (c.status === "completed") { renderCompletedCount(c); return; }
+    renderCountWorkspace();
+  } catch (e) { toast(e.message, true); }
 }
 
 /* ============================ Admin: Upload ============================ */
