@@ -36,6 +36,12 @@ function auth(req, res, next) {
   let p;
   try { p = jwt.verify(tok, JWT_SECRET); }
   catch { return res.status(401).json({ error: "Session expired" }); }
+  if (p.username !== undefined) {
+    // New token with full claims — no DB call needed
+    req.user = { id: p.uid, username: p.username, role: p.role, name: p.name, outlet_id: p.outlet_id || null };
+    return next();
+  }
+  // Old token (only uid+role) — fall back to DB lookup once until re-login
   supabase.from("users").select("id,username,role,name,outlet_id").eq("id", p.uid).maybeSingle()
     .then(({ data: u }) => {
       if (!u) return res.status(401).json({ error: "Session invalid" });
@@ -54,9 +60,13 @@ const pubUser = (u) => ({ id: u.id, username: u.username, role: u.role, name: u.
 app.post("/api/login", wr(async (req, res) => {
   const { username, password } = req.body || {};
   const { data: u } = await supabase.from("users").select("*").eq("username", String(username || "").trim()).maybeSingle();
-  if (!u || !bcrypt.compareSync(String(password || ""), u.password_hash))
+  if (!u || !(await bcrypt.compare(String(password || ""), u.password_hash)))
     return res.status(401).json({ error: "Wrong username or password" });
-  const token = jwt.sign({ uid: u.id, role: u.role }, JWT_SECRET, { expiresIn: "30d" });
+  const token = jwt.sign(
+    { uid: u.id, role: u.role, username: u.username, name: u.name, outlet_id: u.outlet_id || null },
+    JWT_SECRET,
+    { expiresIn: "30d" }
+  );
   res.cookie(COOKIE, token, { httpOnly: true, sameSite: "lax", secure: secureCookie, maxAge: 30 * 864e5 });
   res.json({ user: pubUser(u) });
 }));
