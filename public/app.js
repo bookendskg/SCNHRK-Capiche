@@ -139,7 +139,7 @@ async function boot() {
   route();
 }
 function route() {
-  if (S.nav === "count") return renderCount();
+  if (S.nav === "count") { renderCount().then(() => { if (S.me && S.me.role !== "admin") openCount(); }); return; }
   if (S.nav === "counts") return renderCountsList();
   if (S.nav === "masters") return renderMasters();
   if (S.nav === "barcodes") return renderBarcodes();
@@ -266,8 +266,10 @@ function renderCountWorkspace() {
     </div>`;
   app.querySelectorAll(".addtab").forEach((b) => (b.onclick = () => { CT.addKind = b.dataset.kind; renderCountWorkspace(); }));
   $("complete").onclick = async () => {
-    await saveNow(); await api("/api/counts/" + c.id + "/complete", { method: "POST" });
-    toast("Count marked complete"); openCount();
+    if (!confirm("Mark count as complete? No more items can be added.")) return;
+    const btn = $("complete"); btn.disabled = true; btn.textContent = "Completing…";
+    try { await saveNow(); await api("/api/counts/" + c.id + "/complete", { method: "POST" }); toast("Count marked complete"); openCount(); }
+    catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = "🎉 Mark complete"; }
   };
   renderAddPanel(); renderLines();
 }
@@ -392,7 +394,7 @@ function addLine(line) {
   if (!line.ref_name) { toast("Pick or type a product", true); return; }
   CT.lines.push(line);
   CT.computed.push({});
-  renderLines(); scheduleSave(); toast("Added to count");
+  renderLines(); scheduleSave(); toast("Added: " + line.ref_name);
 }
 
 function renderAddPanel() {
@@ -450,8 +452,8 @@ function renderAddPanel() {
     };
     $("bc").onkeydown = (e) => { if (e.key === "Enter" && $("bc").value.trim()) { onBarcode($("bc").value); $("bc").value = ""; } };
     $("bc-cam").onclick = () => startCamera($("bc-video"), (code) => onBarcode(code));
-    $("u-qty").oninput = updUNet; $("u-unit").onchange = updUNet; updUNet();
-    $("u-add").onclick = () => { addLine({ kind: "unopened", ref_name: $("u-name").value.trim(), qty: parseFloat($("u-qty").value) || 0, unit: $("u-unit").value }); $("u-name").value = ""; $("u-qty").value = ""; const sel = $("u-unit"); if (sel) { sel.innerHTML = [PACK_OPT, ...UNIT_OPTS].map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); sel.value = "pack"; } updUNet(); };
+    $("u-qty").oninput = updUNet; $("u-qty").onfocus = () => $("u-qty").select(); $("u-qty").onkeydown = (e) => { if (e.key === "Enter") $("u-add").click(); }; $("u-unit").onchange = updUNet; updUNet();
+    $("u-add").onclick = () => { addLine({ kind: "unopened", ref_name: $("u-name").value.trim(), qty: parseFloat($("u-qty").value) || 0, unit: $("u-unit").value }); $("u-name").value = ""; $("u-qty").value = ""; const sel = $("u-unit"); if (sel) { sel.innerHTML = [PACK_OPT, ...UNIT_OPTS].map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); sel.value = "pack"; } updUNet(); setTimeout(() => { const el = $("u-name"); if (el) el.focus(); }, 50); };
     return;
   }
   if (k === "opened" || k === "processed") {
@@ -487,13 +489,14 @@ function renderAddPanel() {
           ${unitSelect(k + "-unit", def)}
         </div>
         <div id="${k}-net" class="text-xs text-slate-500 mt-1"></div>`;
-      $(k + "-qty").oninput = updNet; $(k + "-unit").onchange = updNet; updNet();
+      $(k + "-qty").oninput = updNet; $(k + "-qty").onfocus = () => $(k + "-qty").select(); $(k + "-qty").onkeydown = (e) => { if (e.key === "Enter") $(k + "-add").click(); }; $(k + "-unit").onchange = updNet; updNet();
     };
     $(k + "-cont").onchange = drawQty; drawQty();
     $(k + "-add").onclick = () => {
       const cont = $(k + "-cont").value;
       addLine({ kind: k, ref_name: $(k + "-name").value.trim(), container_name: cont || null, qty: parseFloat($(k + "-qty").value) || 0, unit: $(k + "-unit").value });
       $(k + "-name").value = ""; $(k + "-cont").value = ""; drawQty();
+      setTimeout(() => { const el = $(k + "-name"); if (el) el.focus(); }, 50);
     };
     return;
   }
@@ -515,12 +518,14 @@ function renderAddPanel() {
         <input id="n-qty" type="number" inputmode="decimal" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5">
         ${unitSelect("n-unit", "g")}
       </div>`;
+    $("n-qty").onfocus = () => $("n-qty").select(); $("n-qty").onkeydown = (e) => { if (e.key === "Enter") $("n-add").click(); };
   };
   $("n-cont").onchange = drawQ; drawQ();
   $("n-add").onclick = () => {
     const cont = $("n-cont").value;
     addLine({ kind: "notinmaster", ref_name: $("n-name").value.trim(), container_name: cont || null, qty: parseFloat($("n-qty").value) || 0, unit: $("n-unit").value, note: $("n-note").value.trim() });
     $("n-name").value = ""; $("n-note").value = ""; $("n-cont").value = ""; drawQ();
+    setTimeout(() => { const el = $("n-name"); if (el) el.focus(); }, 50);
   };
 }
 
@@ -562,8 +567,8 @@ function renderLines() {
           <div class="text-xs text-slate-500 truncate">${detail}</div></div>
         <div class="flex items-center gap-2 shrink-0">
           <div class="text-sm num ${l.kind === "notinmaster" ? "text-slate-600" : "text-amber-300"}">${l.kind === "notinmaster" ? "—" : inr(cp.value || 0)}</div>
-          <button data-edit="${i}" class="text-slate-500 hover:text-amber-300" title="Edit qty">${I.edit}</button>
-          <button data-del="${i}" class="text-slate-600 hover:text-red-400">${I.trash}</button>
+          <button data-edit="${i}" class="p-2 -m-1 rounded-lg text-slate-500 hover:text-amber-300" title="Edit qty">${I.edit}</button>
+          <button data-del="${i}" class="p-2 -m-1 rounded-lg text-slate-600 hover:text-red-400">${I.trash}</button>
         </div>
       </div>`;
     }).join("")}</div>`;
@@ -576,7 +581,7 @@ function renderLines() {
   }));
   wrap.querySelectorAll("[data-edit]").forEach((b) => (b.onclick = () => {
     editingLineIdx = +b.dataset.edit; renderLines();
-    setTimeout(() => { const el = $("le-qty"); if (el) { el.focus(); el.select(); } }, 0);
+    setTimeout(() => { const el = $("le-qty"); if (el) { el.focus(); el.select(); el.onkeydown = (e) => { if (e.key === "Enter") { const s = wrap.querySelector("[data-lsave]"); if (s) s.click(); } }; } }, 0);
   }));
   wrap.querySelectorAll("[data-lsave]").forEach((b) => (b.onclick = () => {
     const i = +b.dataset.lsave;
