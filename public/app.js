@@ -629,7 +629,8 @@ async function renderCountsList() {
   app.querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));
   app.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
     if (!confirm("Delete this count permanently?")) return;
-    await api("/api/counts/" + b.dataset.del, { method: "DELETE" }); toast("Deleted"); renderCountsList();
+    try { await api("/api/counts/" + b.dataset.del, { method: "DELETE" }); toast("Deleted"); renderCountsList(); }
+    catch (e) { toast(e.message, true); }
   }));
 }
 

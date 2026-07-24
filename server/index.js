@@ -398,7 +398,7 @@ app.delete("/api/users/:id", auth, adminOnly, wr(async (req, res) => {
 }));
 
 /* ---- counts ---- */
-function canSeeCount(user, c) { return user.role === "admin" || c.outlet_id === user.outlet_id; }
+function canSeeCount(user, c) { return user.role === "admin" || String(c.outlet_id) === String(user.outlet_id); }
 
 function valueLine(raw, itemsMap, recipesMap, containersMap) {
   const kind = raw.kind;
