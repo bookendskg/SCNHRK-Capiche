@@ -52,8 +52,8 @@ let toastT;
 const toast = (msg, bad) => {
   let t = $("toast"); if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
   t.className = "fixed left-1/2 bottom-5 -translate-x-1/2 z-50 px-4 py-2.5 rounded-lg text-sm shadow-xl border pop-in " + (bad ? "bg-red-950 border-red-800 text-red-200" : "bg-emerald-950 border-emerald-800 text-emerald-200");
-  t.textContent = (bad ? "⚠️ " : "✅ ") + msg; t.style.display = "block";
-  clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = "none"), 2400);
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = "none"), 2800);
 };
 
 const I = {
@@ -64,6 +64,9 @@ const I = {
   plus: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>',
   edit: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  check: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  sun: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>',
+  moon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
 };
 
 /* ============================ Login ============================ */
@@ -73,7 +76,7 @@ function renderLogin() {
     <div class="w-full max-w-sm fadein">
       <div class="flex items-center gap-2 justify-center mb-8">
         <div class="w-10 h-10 rounded-xl grad-logo flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-pink-500/10">M</div>
-        <div><div class="text-2xl font-semibold leading-none">Mise</div><div class="text-xs text-slate-500">Month-end stock count 📦</div></div>
+        <div><div class="text-2xl font-semibold leading-none">Mise</div><div class="text-xs text-slate-500">Month-end stock count</div></div>
       </div>
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
         <div><label class="text-xs uppercase tracking-wide text-slate-400">Username</label>
@@ -106,10 +109,10 @@ function renderLogin() {
 function shell(content) {
   const admin = S.me.role === "admin";
   const tabs = admin
-    ? [["count", "🧮", "Stock taking"], ["counts", "🗂️", "Saved counts"], ["masters", "📚", "Masters"], ["barcodes", "🔖", "Barcodes"], ["outlets", "🏬", "Outlets & logins"], ["settings", "⚙️", "Settings"]]
-    : [["count", "🧮", "Stock taking"], ["counts", "🗂️", "My counts"], ["settings", "⚙️", "Settings"]];
-  const navHtml = tabs.map(([id, emoji, label]) =>
-    `<button data-nav="${id}" title="${label}" class="btn-pop px-3 py-2 rounded-lg text-sm whitespace-nowrap ${S.nav === id ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30" : "text-slate-400 hover:bg-slate-800"}">${emoji}<span class="hidden sm:inline"> ${label}</span></button>`).join("");
+    ? [["count", "Stock taking"], ["counts", "Saved counts"], ["masters", "Masters"], ["barcodes", "Barcodes"], ["outlets", "Outlets & logins"], ["settings", "Settings"]]
+    : [["count", "Stock taking"], ["counts", "My counts"], ["settings", "Settings"]];
+  const navHtml = tabs.map(([id, label]) =>
+    `<button data-nav="${id}" title="${label}" class="btn-pop px-3 py-2 rounded-lg text-sm whitespace-nowrap ${S.nav === id ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30" : "text-slate-400 hover:bg-slate-800"}">${label}</button>`).join("");
   app.innerHTML = `
   <div class="min-h-screen">
     <header class="sticky top-0 z-30 bg-slate-900/90 backdrop-blur border-b border-slate-800">
@@ -118,7 +121,7 @@ function shell(content) {
         <div class="flex items-center gap-3 text-sm">
           <span class="hidden sm:inline text-slate-400 max-w-[8rem] truncate">${esc(S.me.name || S.me.username)}</span>
           <span class="text-[10px] px-2 py-0.5 rounded ${admin ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}">${admin ? "Admin" : "Manager"}</span>
-          <button id="theme-toggle" title="Toggle light/dark" class="w-8 h-8 flex items-center justify-center rounded-lg text-base hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors">${document.documentElement.getAttribute("data-theme") === "light" ? "☀️" : "🌙"}</button>
+          <button id="theme-toggle" title="Toggle light/dark" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors">${document.documentElement.getAttribute("data-theme") === "light" ? I.sun : I.moon}</button>
           <button id="logout" class="text-slate-500 hover:text-slate-300 text-sm">Sign out</button>
         </div>
       </div>
@@ -128,7 +131,7 @@ function shell(content) {
   </div>`;
   app.querySelectorAll("[data-nav]").forEach((b) => (b.onclick = () => { S.nav = b.dataset.nav; route(); }));
   $("logout").onclick = async () => { await api("/api/logout", { method: "POST" }); S.me = null; renderLogin(); };
-  $("theme-toggle").onclick = () => { toggleTheme(); $("theme-toggle").textContent = document.documentElement.getAttribute("data-theme") === "light" ? "☀️" : "🌙"; };
+  $("theme-toggle").onclick = () => { toggleTheme(); $("theme-toggle").innerHTML = document.documentElement.getAttribute("data-theme") === "light" ? I.sun : I.moon; };
 }
 
 async function boot() {
@@ -150,10 +153,10 @@ function route() {
 /* ============================ Stock taking ============================ */
 const CT = { current: null, lines: [], computed: [], addKind: "unopened" };
 const KIND_STYLE = {
-  unopened: { emoji: "📦", active: "bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30", text: "text-sky-300" },
-  opened: { emoji: "🥣", active: "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30", text: "text-violet-300" },
-  processed: { emoji: "🍲", active: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30", text: "text-emerald-300" },
-  notinmaster: { emoji: "❓", active: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30", text: "text-rose-300" },
+  unopened: { active: "bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30", text: "text-sky-300" },
+  opened: { active: "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30", text: "text-violet-300" },
+  processed: { active: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30", text: "text-emerald-300" },
+  notinmaster: { active: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30", text: "text-rose-300" },
 };
 let saveTimer;
 let editingLineIdx = null;
@@ -254,7 +257,7 @@ function renderCountWorkspace() {
       <div class="p-3">
         <div class="flex gap-1.5 mb-3 overflow-x-auto">
           ${[["unopened", "Unopened (scan)"], ["opened", "Opened"], ["processed", "Processed / recipe"], ["notinmaster", "Not in master"]]
-            .map(([k, l]) => `<button data-kind="${k}" class="addtab btn-pop px-3 py-1.5 rounded-lg text-sm whitespace-nowrap ${CT.addKind === k ? KIND_STYLE[k].active : "bg-slate-800 text-slate-300"}">${KIND_STYLE[k].emoji} ${l}</button>`).join("")}
+            .map(([k, l]) => `<button data-kind="${k}" class="addtab btn-pop px-3 py-1.5 rounded-lg text-sm whitespace-nowrap ${CT.addKind === k ? KIND_STYLE[k].active : "bg-slate-800 text-slate-300"}">${l}</button>`).join("")}
         </div>
         <div id="add-panel"></div>
       </div>
@@ -262,14 +265,14 @@ function renderCountWorkspace() {
     <div id="lines-wrap"></div>
     <div class="flex gap-2 mt-4">
       <a href="/api/counts/${c.id}/export" class="btn-pop flex-1 text-center bg-slate-800 hover:bg-slate-700 rounded-lg py-2.5 text-sm">${I.down} <span class="align-middle">Export Excel</span></a>
-      <button id="complete" class="btn-pop flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2.5 text-sm">🎉 Mark complete</button>
+      <button id="complete" class="btn-pop flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2.5 text-sm">${I.check} <span class="align-middle">Mark complete</span></button>
     </div>`;
   app.querySelectorAll(".addtab").forEach((b) => (b.onclick = () => { CT.addKind = b.dataset.kind; renderCountWorkspace(); }));
   $("complete").onclick = async () => {
     if (!confirm("Mark count as complete? No more items can be added.")) return;
     const btn = $("complete"); btn.disabled = true; btn.textContent = "Completing…";
     try { await saveNow(); await api("/api/counts/" + c.id + "/complete", { method: "POST" }); toast("Count marked complete"); openCount(); }
-    catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = "🎉 Mark complete"; }
+    catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = `${I.check} <span class="align-middle">Mark complete</span>`; }
   };
   renderAddPanel(); renderLines();
 }
@@ -539,7 +542,7 @@ function renderLines() {
       const ks = KIND_STYLE[l.kind] || KIND_STYLE.unopened;
       if (i === editingLineIdx) {
         return `<div class="px-3 py-2.5 space-y-2">
-          <div class="text-sm text-slate-100">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${ks.emoji} ${kindLabel[l.kind]}</span></div>
+          <div class="text-sm text-slate-100">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
           <div class="flex gap-2 items-center flex-wrap">
             <input id="le-qty" type="number" inputmode="decimal" value="${l.qty != null ? l.qty : ""}" class="w-28 bg-slate-950 border border-amber-500/50 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40">
             <select id="le-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${[PACK_OPT, ...UNIT_OPTS].map(([v, lbl]) => `<option value="${v}"${v === l.unit ? " selected" : ""}>${lbl}</option>`).join("")}</select>
@@ -563,7 +566,7 @@ function renderLines() {
         detail = `${qf(cp.qty != null ? cp.qty : l.qty || 0)} ${esc(cp.unit || l.unit || "")}`;
       }
       return `<div class="flex items-center justify-between px-3 py-2.5">
-        <div class="min-w-0"><div class="text-sm text-slate-100 truncate">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${ks.emoji} ${kindLabel[l.kind]}</span></div>
+        <div class="min-w-0"><div class="text-sm text-slate-100 truncate">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
           <div class="text-xs text-slate-500 truncate">${detail}</div></div>
         <div class="flex items-center gap-2 shrink-0">
           <div class="text-sm num ${l.kind === "notinmaster" ? "text-slate-600" : "text-amber-300"}">${l.kind === "notinmaster" ? "—" : inr(cp.value || 0)}</div>
@@ -705,7 +708,10 @@ async function renderMasters(retainPage) {
     <tbody class="divide-y divide-slate-800">${labeled}</tbody></table></div>`;
   };
 
-  const ings = [...m.items.map((i) => i.name), ...m.recipes.map((r) => r.name)];
+  const ingPool = [
+    ...m.items.map((i) => ({ name: i.name, sub: i.category || i.unit || "" })),
+    ...m.recipes.map((r) => ({ name: r.name, sub: "recipe" })),
+  ];
   const ITEMS_PER_PAGE = 5;
   const clearBtn = (type) => `<button data-clearall="${type}" class="bg-red-900/40 hover:bg-red-800/60 text-red-300 rounded-lg px-3 py-1.5 text-xs ml-2">Clear all</button>`;
 
@@ -751,7 +757,6 @@ async function renderMasters(retainPage) {
         <input id="rb-yield" type="number" inputmode="decimal" placeholder="Batch yield" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
         ${unitSelect("rb-unit", "gm")}
       </div>
-      <datalist id="rb-ings">${ings.map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
       <div id="rb-rows" class="space-y-2 mb-2"></div>
       <div class="flex flex-wrap gap-2 mb-3">
         <button id="rb-addrow" class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">+ ingredient</button>
@@ -820,18 +825,45 @@ async function renderMasters(retainPage) {
   }
   function addRow(ing, qty, u) {
     const row = document.createElement("div");
-    row.className = "rb-row flex flex-wrap gap-2";
-    row.innerHTML = `<input class="rb-ing flex-1 min-w-[8rem] bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm" list="rb-ings" placeholder="Ingredient (item or recipe)" value="${esc(ing || "")}">
+    row.className = "rb-row flex flex-wrap gap-2 items-start";
+    row.innerHTML = `
+      <div class="relative flex-1 min-w-[8rem]">
+        <input class="rb-ing w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40" autocomplete="off" placeholder="Type to search ingredient…" value="${esc(ing || "")}">
+        <div class="rb-ing-list hidden absolute z-30 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg overflow-hidden shadow-xl" style="max-height:13rem;overflow-y:auto"></div>
+      </div>
       <input class="rb-qty w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm" type="number" inputmode="decimal" placeholder="Qty" value="${qty != null ? qty : ""}">
       ${unitSelect("", u || "gm", "rb-u")}
       <span class="rb-row-cost text-xs text-slate-400 self-center w-16 text-right tabular-nums"></span>
-      <button class="rb-del text-slate-600 hover:text-red-400 px-1">${I.x}</button>`;
-    rowsBox.appendChild(row);
-    row.querySelectorAll("input,select").forEach((el) => (el.oninput = recompute));
+      <button class="rb-del p-1.5 -m-0.5 text-slate-600 hover:text-red-400">${I.x}</button>`;
+    const ingInput = row.querySelector(".rb-ing");
+    const ingList = row.querySelector(".rb-ing-list");
+    const drawList = () => {
+      const q = ingInput.value.trim().toLowerCase();
+      if (!q) { ingList.classList.add("hidden"); return; }
+      const hits = ingPool.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 12);
+      ingList.innerHTML = hits.length
+        ? hits.map((p) => `<button type="button" class="opt w-full text-left px-3 py-2 hover:bg-slate-800 flex justify-between gap-2 text-sm"><span class="truncate">${esc(p.name)}</span><span class="text-slate-500 text-xs shrink-0">${esc(p.sub || "")}</span></button>`).join("")
+        : `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
+      ingList.classList.remove("hidden");
+      ingList.querySelectorAll(".opt").forEach((b) => (b.onmousedown = (e) => {
+        e.preventDefault();
+        ingInput.value = b.querySelector("span").textContent.trim();
+        ingList.classList.add("hidden");
+        recompute();
+      }));
+    };
+    ingInput.oninput = drawList;
+    ingInput.onfocus = drawList;
+    ingInput.onblur = () => ingList.classList.add("hidden");
+    ingInput.onchange = recompute;
+    row.querySelector(".rb-qty").oninput = recompute;
+    row.querySelector(".rb-u").onchange = recompute;
     row.querySelector(".rb-del").onclick = () => { row.remove(); recompute(); };
+    rowsBox.appendChild(row);
     recompute();
+    return ingInput;
   }
-  $("rb-addrow").onclick = () => addRow();
+  $("rb-addrow").onclick = () => { const inp = addRow(); inp.focus(); };
   $("rb-yield").oninput = recompute; $("rb-unit").oninput = recompute;
   const loadExample = (name, yq, bu, rows) => { $("rb-name").value = name; $("rb-yield").value = yq; $("rb-unit").value = bu === "ml" ? "ml" : "gm"; rowsBox.innerHTML = ""; rows.forEach((r) => addRow(r[0], r[1], r[2])); if (!rows.length) addRow(); };
   $("rb-ex1").onclick = () => { setRecipeMode(null); loadExample("Orange sauce", 370, "g", [["Red sauce", 300, "gm"], ["Garlic", 50, "gm"], ["Olive oil", 20, "ml"]]); };
