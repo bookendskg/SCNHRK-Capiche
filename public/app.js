@@ -436,8 +436,10 @@ function renderAddPanel() {
             <button id="u-add" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2.5">${I.plus}</button>
           </div>
           <div id="u-net" class="text-xs text-slate-500 mt-1"></div>
+          <div id="u-conv-wrap"></div>
         </div>
       </div>`;
+    const COUNT_UNITS = ["pcs", "pc", "box", "qty", "piece"];
     const updUNet = () => {
       const el = $("u-net"); if (!el) return;
       const q = parseFloat($("u-qty").value) || 0, u = $("u-unit").value;
@@ -446,6 +448,14 @@ function renderAddPanel() {
         const it = nm ? S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase()) : null;
         el.textContent = (it && it.pack_qty && it.unit) ? `1 pack = ${it.pack_qty} ${it.unit}` : "Valued at pack price × quantity";
         return;
+      }
+      if (COUNT_UNITS.includes(u.toLowerCase())) {
+        const nm = ($("u-name") && $("u-name").value.trim()) || "";
+        const it = nm ? S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase()) : null;
+        if (it && ["g", "ml"].includes(it.base_unit)) {
+          el.textContent = `Will ask: how many ${it.base_unit} is 1 ${u}?`;
+          return;
+        }
       }
       const baseU = baseUnitOf($("u-name").value);
       el.textContent = (u === "kg" || u === "ltr") ? `= ${qf(q * factorJS(u))} ${baseU} · valued at unit cost` : "Valued at unit cost";
@@ -476,8 +486,49 @@ function renderAddPanel() {
     };
     $("bc").onkeydown = (e) => { if (e.key === "Enter" && $("bc").value.trim()) { onBarcode($("bc").value); $("bc").value = ""; } };
     $("bc-cam").onclick = () => startCamera($("bc-video"), (code) => onBarcode(code));
-    $("u-qty").oninput = updUNet; $("u-qty").onfocus = () => $("u-qty").select(); $("u-qty").onkeydown = (e) => { if (e.key === "Enter") $("u-add").click(); }; $("u-unit").onchange = updUNet; updUNet();
-    $("u-add").onclick = () => { addLine({ kind: "unopened", ref_name: $("u-name").value.trim(), qty: parseFloat($("u-qty").value) || 0, unit: $("u-unit").value }); $("u-name").value = ""; $("u-qty").value = ""; const sel = $("u-unit"); if (sel) { sel.innerHTML = [PACK_OPT, ...UNIT_OPTS].map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); sel.value = "pack"; } updUNet(); setTimeout(() => { const el = $("u-name"); if (el) el.focus(); }, 50); };
+    $("u-qty").oninput = updUNet; $("u-qty").onfocus = () => $("u-qty").select(); $("u-unit").onchange = () => { const cw = $("u-conv-wrap"); if (cw) cw.innerHTML = ""; updUNet(); }; updUNet();
+    const resetUnopened = () => {
+      $("u-name").value = ""; $("u-qty").value = "";
+      const sel = $("u-unit"); if (sel) { sel.innerHTML = [PACK_OPT, ...UNIT_OPTS].map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); sel.value = "pack"; }
+      const cw = $("u-conv-wrap"); if (cw) cw.innerHTML = "";
+      updUNet(); setTimeout(() => { const el = $("u-name"); if (el) el.focus(); }, 50);
+    };
+    const doAddUnopened = () => {
+      const nm = $("u-name").value.trim();
+      const qty = parseFloat($("u-qty").value) || 0;
+      const unit = $("u-unit").value;
+      const convWrap = $("u-conv-wrap");
+      const it = nm ? S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase()) : null;
+      const needsConv = it && COUNT_UNITS.includes(unit.toLowerCase()) && ["g", "ml"].includes(it.base_unit);
+      if (needsConv && convWrap) {
+        if (convWrap.innerHTML) return; // already showing
+        convWrap.innerHTML = `<div class="mt-2 bg-amber-950/60 border border-amber-500/30 rounded-lg p-3">
+          <div class="text-xs text-amber-200 mb-2">How many <b>${it.base_unit}</b> is 1 <b>${esc(unit)}</b> of <b>${esc(nm)}</b>?</div>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="u-conv-val" type="number" inputmode="decimal" min="0.001" step="any" placeholder="e.g. 250"
+              class="w-28 bg-slate-950 border border-amber-500/40 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40">
+            <span class="text-xs text-slate-400">${it.base_unit} per ${esc(unit)}</span>
+            <button id="u-conv-ok" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-xs">Confirm & Add</button>
+            <button id="u-conv-cancel" class="text-slate-500 hover:text-slate-300 text-xs px-2 py-1.5">Cancel</button>
+          </div>
+        </div>`;
+        const convInput = $("u-conv-val"); convInput.focus();
+        const confirmConv = () => {
+          const conv = parseFloat(convInput.value);
+          if (!conv || conv <= 0) { toast("Enter how many " + it.base_unit + " is in 1 " + unit, true); return; }
+          addLine({ kind: "unopened", ref_name: nm, qty: qty * conv, unit: it.base_unit, note: qty + " " + unit + " × " + conv + " " + it.base_unit + "/" + unit });
+          resetUnopened();
+        };
+        convInput.onkeydown = (e) => { if (e.key === "Enter") confirmConv(); if (e.key === "Escape") { convWrap.innerHTML = ""; } };
+        $("u-conv-ok").onclick = confirmConv;
+        $("u-conv-cancel").onclick = () => { convWrap.innerHTML = ""; };
+        return;
+      }
+      addLine({ kind: "unopened", ref_name: nm, qty, unit });
+      resetUnopened();
+    };
+    $("u-qty").onkeydown = (e) => { if (e.key === "Enter") doAddUnopened(); };
+    $("u-add").onclick = doAddUnopened;
     return;
   }
   if (k === "opened" || k === "processed") {
@@ -581,10 +632,12 @@ function renderLines() {
       } else if (l.kind === "unopened" && (!inU || inU === "pack")) {
         detail = `${qf(cp.qty != null ? cp.qty : l.qty || 0)} pack(s)`;
       } else if (inU && inQ != null) {
-        const conv = cp.unit && String(inU).toLowerCase() !== String(cp.unit).toLowerCase();
-        detail = conv ? `${qf(inQ)} ${esc(inU)} → ${qf(cp.qty)} ${esc(cp.unit)}` : `${qf(inQ)} ${esc(inU)}`;
+        const hasMismatch = cp.unit && String(inU).toLowerCase() !== String(cp.unit).toLowerCase();
+        detail = hasMismatch ? `${qf(inQ)} ${esc(inU)} → ${qf(cp.qty)} ${esc(cp.unit)}` : `${qf(inQ)} ${esc(inU)}`;
+        if (l.note) detail += ` · ${esc(l.note)}`;
       } else {
         detail = `${qf(cp.qty != null ? cp.qty : l.qty || 0)} ${esc(cp.unit || l.unit || "")}`;
+        if (l.note) detail += ` · ${esc(l.note)}`;
       }
       return `<div class="flex items-center justify-between px-3 py-2.5">
         <div class="min-w-0"><div class="text-sm text-slate-100 truncate">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
