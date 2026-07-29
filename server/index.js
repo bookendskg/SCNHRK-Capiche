@@ -366,14 +366,20 @@ app.delete("/api/outlets/:id", auth, adminOnly, wr(async (req, res) => {
   const id = req.params.id;
   const { data: o } = await supabase.from("outlets").select("id").eq("id", id).maybeSingle();
   if (!o) return res.status(404).json({ error: "Outlet not found" });
-  // Explicit cascade: delete count_lines → counts → unlink users → delete outlet
-  const { data: counts } = await supabase.from("counts").select("id").eq("outlet_id", id);
+  // Explicit cascade: count_lines → counts → unlink users → outlet
+  const { data: counts, error: ce } = await supabase.from("counts").select("id").eq("outlet_id", id);
+  if (ce) return res.status(500).json({ error: "counts: " + ce.message });
   const countIds = (counts || []).map((c) => c.id);
-  if (countIds.length) await supabase.from("count_lines").delete().in("count_id", countIds);
-  await supabase.from("counts").delete().eq("outlet_id", id);
-  await supabase.from("users").update({ outlet_id: null }).eq("outlet_id", id);
-  const { error } = await supabase.from("outlets").delete().eq("id", id);
-  if (error) return res.status(500).json({ error: error.message });
+  if (countIds.length) {
+    const { error: cle } = await supabase.from("count_lines").delete().in("count_id", countIds);
+    if (cle) return res.status(500).json({ error: "count_lines: " + cle.message });
+  }
+  const { error: de } = await supabase.from("counts").delete().eq("outlet_id", id);
+  if (de) return res.status(500).json({ error: "delete counts: " + de.message });
+  const { error: ue } = await supabase.from("users").update({ outlet_id: null }).eq("outlet_id", id);
+  if (ue) return res.status(500).json({ error: "unlink users: " + ue.message });
+  const { error: oe } = await supabase.from("outlets").delete().eq("id", id);
+  if (oe) return res.status(500).json({ error: "delete outlet: " + oe.message });
   res.json({ ok: true });
 }));
 
@@ -568,10 +574,11 @@ app.get("/api/counts/:id/export", auth, wr(async (req, res) => {
   res.end(Buffer.from(out.buffer));
 }));
 
-/* ---- error handler ---- */
+/* ---- 404 + error handlers ---- */
+app.use("/api", (req, res) => res.status(404).json({ error: "API endpoint not found" }));
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({ error: "Server error" });
+  res.status(500).json({ error: err.message || "Server error" });
 });
 
 /* ---- static frontend ---- */
