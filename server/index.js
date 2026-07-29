@@ -509,12 +509,20 @@ app.put("/api/counts/:id", auth, wr(async (req, res) => {
     sum += v.value;
   }
 
-  await supabase.from("count_lines").delete().eq("count_id", c.id);
-  if (processedLines.length) await supabase.from("count_lines").insert(processedLines);
-  await supabase.from("counts").update({ total_value: sum, updated_at: new Date().toISOString() }).eq("id", c.id);
+  const shouldComplete = req.body.complete === true;
+  const countUpdate = { total_value: sum, updated_at: new Date().toISOString() };
+  if (shouldComplete) countUpdate.status = "completed";
 
-  const { data: lines } = await supabase.from("count_lines").select("*").eq("count_id", c.id).order("id");
-  res.json({ ok: true, total_value: sum, lines: lines || [] });
+  await Promise.all([
+    supabase.from("count_lines").delete().eq("count_id", c.id),
+  ]);
+  const [insertResult] = await Promise.all([
+    processedLines.length ? supabase.from("count_lines").insert(processedLines) : Promise.resolve(),
+    supabase.from("counts").update(countUpdate).eq("id", c.id),
+  ]);
+
+  // Return computed lines directly — no extra SELECT needed
+  res.json({ ok: true, total_value: sum, status: shouldComplete ? "completed" : "open", lines: processedLines.map(({ count_id, ...l }) => l) });
 }));
 
 app.post("/api/counts/:id/complete", auth, wr(async (req, res) => {

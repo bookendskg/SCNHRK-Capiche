@@ -289,8 +289,12 @@ function renderCountWorkspace() {
   $("complete").onclick = async () => {
     if (!confirm("Mark count as complete? No more items can be added.")) return;
     const btn = $("complete"); btn.disabled = true; btn.textContent = "Completing…";
-    try { await saveNow(); await api("/api/counts/" + c.id + "/complete", { method: "POST" }); toast("Count marked complete"); openCount(); }
-    catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = `${I.check} <span class="align-middle">Mark complete</span>`; }
+    try {
+      clearTimeout(saveTimer);
+      const r = await api("/api/counts/" + c.id, { method: "PUT", body: JSON.stringify({ lines: CT.lines, complete: true }) });
+      CT.computed = r.lines || []; CT.current.total_value = r.total_value; CT.current.status = "completed";
+      toast("Count marked complete"); renderCompletedCount(CT.current);
+    } catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = `${I.check} <span class="align-middle">Mark complete</span>`; }
   };
   renderAddPanel(); renderLines();
 }
