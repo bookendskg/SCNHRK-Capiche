@@ -362,6 +362,13 @@ app.post("/api/outlets", auth, adminOnly, wr(async (req, res) => {
   res.json(r);
 }));
 
+app.delete("/api/outlets/:id", auth, adminOnly, wr(async (req, res) => {
+  const { data: o } = await supabase.from("outlets").select("id").eq("id", req.params.id).maybeSingle();
+  if (!o) return res.status(404).json({ error: "Outlet not found" });
+  await supabase.from("outlets").delete().eq("id", req.params.id);
+  res.json({ ok: true });
+}));
+
 app.get("/api/users", auth, adminOnly, wr(async (req, res) => {
   const { data } = await supabase.from("users")
     .select("id,username,name,outlet_id,outlets(name)")

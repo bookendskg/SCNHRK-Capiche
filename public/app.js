@@ -1295,7 +1295,7 @@ async function renderOutlets() {
     <div class="grid md:grid-cols-2 gap-4">
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
         <div class="text-sm font-medium mb-3">Outlets</div>
-        <div class="space-y-1 mb-3 text-sm">${outlets.map((o) => `<div class="text-slate-300">${esc(o.name)}</div>`).join("") || '<div class="text-slate-500">None yet</div>'}</div>
+        <div class="space-y-1 mb-3">${outlets.map((o) => `<div class="flex items-center justify-between gap-2 py-0.5"><span class="text-sm text-slate-300">${esc(o.name)}</span><button data-odel="${o.id}" data-oname="${esc(o.name)}" class="text-slate-600 hover:text-red-400 text-xs shrink-0">${I.trash}</button></div>`).join("") || '<div class="text-sm text-slate-500">None yet</div>'}</div>
         <div class="flex gap-2"><input id="o-name" placeholder="New outlet name" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm"><button id="o-add" class="bg-amber-500 text-slate-950 rounded-lg px-3">${I.plus}</button></div>
       </div>
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
@@ -1316,6 +1316,11 @@ async function renderOutlets() {
         <td data-label="" class="px-3 py-2 text-right whitespace-nowrap"><button data-pw="${u.id}" class="text-amber-300 text-xs">Reset pw</button><button data-del="${u.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button></td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">No logins yet.</td></tr>`}</tbody></table></div>
     </div>`);
   $("o-add").onclick = async () => { try { await api("/api/outlets", { method: "POST", body: JSON.stringify({ name: $("o-name").value }) }); toast("Outlet added"); renderOutlets(); } catch (e) { toast(e.message, true); } };
+  app.querySelectorAll("[data-odel]").forEach((b) => (b.onclick = async () => {
+    if (!confirm(`Delete outlet "${b.dataset.oname}"?\n\nThis will also delete ALL counts for this outlet and unlink its logins. This cannot be undone.`)) return;
+    try { await api("/api/outlets/" + b.dataset.odel, { method: "DELETE" }); toast("Outlet deleted"); renderOutlets(); }
+    catch (e) { toast(e.message, true); }
+  }));
   $("u-add2").onclick = async () => {
     try { await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("u-uname").value, password: $("u-pw").value, name: $("u-name2").value, outlet_id: $("u-outlet").value }) }); toast("Login created"); renderOutlets(); }
     catch (e) { toast(e.message, true); }
