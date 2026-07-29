@@ -187,7 +187,7 @@ async function renderCount() {
     return shell(`<div class="bg-slate-900 border border-slate-800 rounded-xl p-6 text-center text-slate-400">Your login isn't linked to an outlet yet. Ask your admin to assign one.</div>`);
   }
   shell(`
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4">
+    <div id="count-form-card" class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4">
       <div class="text-sm font-medium mb-3">New count</div>
       <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2">
         <div class="flex flex-col w-full sm:w-auto"><label class="text-[11px] text-slate-400 mb-0.5">Outlet</label>${outletPicker}</div>
@@ -251,7 +251,9 @@ async function openCount() {
   } catch (e) { toast(e.message, true); }
 }
 
+function hideCountForm() { const fc = $("count-form-card"); if (fc) fc.style.display = "none"; }
 function renderCompletedCount(c) {
+  hideCountForm();
   $("count-area").innerHTML = `<div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
     <div class="flex items-center justify-between mb-2"><div class="font-medium">${esc(countTitle(c))} — completed</div>
       <a href="/api/counts/${c.id}/export" class="text-sm text-amber-300">Export Excel</a></div>
@@ -262,6 +264,7 @@ function renderCompletedCount(c) {
 }
 
 function renderCountWorkspace() {
+  hideCountForm();
   const c = CT.current;
   $("count-area").innerHTML = `
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-4">
