@@ -142,7 +142,7 @@ async function boot() {
   route();
 }
 function route() {
-  if (S.nav === "count") { renderCount().then(() => { if (S.me && S.me.role !== "admin") openCount(); }); return; }
+  if (S.nav === "count") { renderCount(); return; }
   if (S.nav === "counts") return renderCountsList();
   if (S.nav === "masters") return renderMasters();
   if (S.nav === "barcodes") return renderBarcodes();
@@ -188,23 +188,23 @@ async function renderCount() {
   }
   shell(`
     <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4">
-      <div class="text-sm font-medium mb-3">Start or resume a count</div>
+      <div class="text-sm font-medium mb-3">New count</div>
       <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2">
         <div class="flex flex-col w-full sm:w-auto"><label class="text-[11px] text-slate-400 mb-0.5">Outlet</label>${outletPicker}</div>
         <div class="flex flex-col w-full sm:w-auto">
-          <label class="text-[11px] text-teal-400 mb-0.5">Count date <span class="text-slate-500 font-normal">— type it, or tap 📅</span></label>
+          <label class="text-[11px] text-teal-400 mb-0.5">Count date</label>
           <div class="relative flex items-center">
             <input id="cf-date-text" type="text" inputmode="numeric" placeholder="DD-MM-YYYY" value="${dispDate(today())}"
               class="w-full sm:w-40 bg-slate-950 border-2 border-teal-500/70 focus:border-teal-400 focus:outline-none rounded-lg pl-3 pr-10 py-2 text-sm text-teal-200 placeholder:text-teal-700/70">
-            <div class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md bg-fuchsia-500/20 flex items-center justify-center text-sm pointer-events-none">📅</div>
+            <div class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md bg-fuchsia-500/20 flex items-center justify-center text-slate-400 pointer-events-none">${I.edit}</div>
             <input id="cf-date" type="date" value="${today()}"
               class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 opacity-0 cursor-pointer">
           </div>
         </div>
-        <button id="cf-go" class="btn-pop w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2 text-sm">Start count</button>
+        <button id="cf-go" class="btn-pop w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2 text-sm">Start new count</button>
       </div>
       <div id="cf-date-err" class="text-xs text-rose-400 mt-1.5 hidden">Hmm, that doesn't look like a valid date — try DD-MM-YYYY.</div>
-      <p class="text-xs text-slate-500 mt-2">Counts auto-save and are filed by month. Pick any date in the same month to pick up where you left off.</p>
+      <div id="open-counts-area" class="mt-1"></div>
     </div>
     <div id="count-area"></div>`);
   const syncFromManual = () => {
@@ -216,10 +216,25 @@ async function renderCount() {
     return ok;
   };
   const syncFromCalendar = () => { $("cf-date-text").value = dispDate($("cf-date").value); $("cf-date-text").classList.remove("border-rose-500"); $("cf-date-err").classList.add("hidden"); };
-  $("cf-date-text").onchange = syncFromManual;
-  $("cf-date-text").onkeydown = (e) => { if (e.key === "Enter") syncFromManual(); };
-  $("cf-date").onchange = syncFromCalendar;
+  const loadOpenCounts = async () => {
+    const area = $("open-counts-area"); if (!area) return;
+    try {
+      const all = await api("/api/counts");
+      const period = (($("cf-date") && $("cf-date").value) || today()).slice(0, 7);
+      const oid = admin ? ($("cf-outlet") && parseInt($("cf-outlet").value, 10)) : S.me.outlet_id;
+      const open = all.filter((c) => c.status === "open" && String(c.outlet_id) === String(oid) && c.period === period);
+      if (!open.length) { area.innerHTML = ""; return; }
+      area.innerHTML = `<div class="border-t border-slate-800 pt-3 mt-2"><div class="text-xs text-slate-400 mb-2">Open counts this period — tap to continue</div>
+        <div class="flex flex-col gap-1.5">${open.map((c) => `<button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="flex items-center justify-between bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-lg px-3 py-2 text-sm text-amber-300"><span>${esc(countTitle(c))}</span><span class="text-xs opacity-70">Continue →</span></button>`).join("")}</div></div>`;
+      area.querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));
+    } catch {}
+  };
+  $("cf-date-text").onchange = () => { syncFromManual(); loadOpenCounts(); };
+  $("cf-date-text").onkeydown = (e) => { if (e.key === "Enter") { syncFromManual(); loadOpenCounts(); } };
+  $("cf-date").onchange = () => { syncFromCalendar(); loadOpenCounts(); };
+  if (admin) $("cf-outlet") && ($("cf-outlet").onchange = loadOpenCounts);
   $("cf-go").onclick = () => { if (syncFromManual()) openCount(); else toast("Enter a valid date (DD-MM-YYYY)", true); };
+  loadOpenCounts();
 }
 
 async function openCount() {
@@ -426,7 +441,12 @@ function renderAddPanel() {
     const updUNet = () => {
       const el = $("u-net"); if (!el) return;
       const q = parseFloat($("u-qty").value) || 0, u = $("u-unit").value;
-      if (u === "pack") { el.textContent = "Valued at pack price × quantity"; return; }
+      if (u === "pack") {
+        const nm = ($("u-name") && $("u-name").value.trim()) || "";
+        const it = nm ? S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase()) : null;
+        el.textContent = (it && it.pack_qty && it.unit) ? `1 pack = ${it.pack_qty} ${it.unit}` : "Valued at pack price × quantity";
+        return;
+      }
       const baseU = baseUnitOf($("u-name").value);
       el.textContent = (u === "kg" || u === "ltr") ? `= ${qf(q * factorJS(u))} ${baseU} · valued at unit cost` : "Valued at unit cost";
     };
@@ -447,10 +467,11 @@ function renderAddPanel() {
       const opts = isPack ? [PACK_OPT, ...UNIT_OPTS] : UNIT_OPTS;
       sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
       if ([...sel.options].some((o) => o.value === target)) sel.value = target;
+      updUNet();
     };
     const onBarcode = (code) => {
       const it = S.catalog.items.find((i) => (i.barcode || "") === code.trim());
-      if (it) { $("u-name").value = it.name; $("bc-match").innerHTML = `<span class="text-emerald-400">Matched: ${esc(it.name)}</span>`; autoSetUnit(it.name); $("u-qty").focus(); }
+      if (it) { $("u-name").value = it.name; $("bc-match").innerHTML = `<span class="text-emerald-400">Matched: ${esc(it.name)}</span>`; autoSetUnit(it.name); updUNet(); $("u-qty").focus(); }
       else $("bc-match").innerHTML = `<span class="text-amber-400">No item with barcode ${esc(code)} — search by name or use "Not in master".</span>`;
     };
     $("bc").onkeydown = (e) => { if (e.key === "Enter" && $("bc").value.trim()) { onBarcode($("bc").value); $("bc").value = ""; } };

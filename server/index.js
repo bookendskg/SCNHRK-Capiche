@@ -467,11 +467,6 @@ app.post("/api/counts", auth, wr(async (req, res) => {
   const outlet_id = req.user.role === "admin" ? parseInt(req.body.outlet_id, 10) : req.user.outlet_id;
   const period = String(req.body.period || new Date().toISOString().slice(0, 7));
   if (!outlet_id) return res.status(400).json({ error: "Outlet required" });
-  const { data: existing } = await supabase.from("counts").select("*").eq("outlet_id", outlet_id).eq("period", period).eq("status", "open").maybeSingle();
-  if (existing) {
-    const { data: lines } = await supabase.from("count_lines").select("*").eq("count_id", existing.id).order("id");
-    return res.json({ ...existing, lines: lines || [] });
-  }
   const { data: c } = await supabase.from("counts").insert({ outlet_id, period, label: String(req.body.label || ""), created_by: req.user.id }).select().single();
   res.json({ ...c, lines: [] });
 }));
