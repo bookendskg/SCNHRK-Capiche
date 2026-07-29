@@ -363,9 +363,17 @@ app.post("/api/outlets", auth, adminOnly, wr(async (req, res) => {
 }));
 
 app.delete("/api/outlets/:id", auth, adminOnly, wr(async (req, res) => {
-  const { data: o } = await supabase.from("outlets").select("id").eq("id", req.params.id).maybeSingle();
+  const id = req.params.id;
+  const { data: o } = await supabase.from("outlets").select("id").eq("id", id).maybeSingle();
   if (!o) return res.status(404).json({ error: "Outlet not found" });
-  await supabase.from("outlets").delete().eq("id", req.params.id);
+  // Explicit cascade: delete count_lines → counts → unlink users → delete outlet
+  const { data: counts } = await supabase.from("counts").select("id").eq("outlet_id", id);
+  const countIds = (counts || []).map((c) => c.id);
+  if (countIds.length) await supabase.from("count_lines").delete().in("count_id", countIds);
+  await supabase.from("counts").delete().eq("outlet_id", id);
+  await supabase.from("users").update({ outlet_id: null }).eq("outlet_id", id);
+  const { error } = await supabase.from("outlets").delete().eq("id", id);
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 }));
 
