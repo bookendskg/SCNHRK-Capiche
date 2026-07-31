@@ -201,6 +201,11 @@ async function renderCount() {
               class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 opacity-0 cursor-pointer">
           </div>
         </div>
+        <div class="flex flex-col w-full sm:w-auto">
+          <label class="text-[11px] text-slate-400 mb-0.5">Who is counting?</label>
+          <input id="cf-counter" type="text" placeholder="Enter name" value="${esc(S.me.name || S.me.username || '')}"
+            class="w-full sm:w-44 bg-slate-950 border border-slate-700 focus:border-amber-400 focus:outline-none rounded-lg px-3 py-2 text-sm">
+        </div>
         <button id="cf-go" class="btn-pop w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2 text-sm">Start new count</button>
       </div>
       <div id="cf-date-err" class="text-xs text-rose-400 mt-1.5 hidden">Hmm, that doesn't look like a valid date — try DD-MM-YYYY.</div>
@@ -233,7 +238,12 @@ async function renderCount() {
   $("cf-date-text").onkeydown = (e) => { if (e.key === "Enter") { syncFromManual(); loadOpenCounts(); } };
   $("cf-date").onchange = () => { syncFromCalendar(); loadOpenCounts(); };
   if (admin) $("cf-outlet") && ($("cf-outlet").onchange = loadOpenCounts);
-  $("cf-go").onclick = () => { if (syncFromManual()) openCount(); else toast("Enter a valid date (DD-MM-YYYY)", true); };
+  $("cf-go").onclick = () => {
+    if (!syncFromManual()) { toast("Enter a valid date (DD-MM-YYYY)", true); return; }
+    const counter = $("cf-counter") && $("cf-counter").value.trim();
+    if (!counter) { toast("Please enter who is counting", true); return; }
+    openCount();
+  };
   loadOpenCounts();
 }
 
@@ -243,7 +253,8 @@ async function openCount() {
   const dateVal = ($("cf-date") && $("cf-date").value) || today();
   const period = (dateVal || "").slice(0, 7) || thisPeriod();
   try {
-    const c = await api("/api/counts", { method: "POST", body: JSON.stringify({ outlet_id, period, label: dateVal }) });
+    const counted_by = ($("cf-counter") && $("cf-counter").value.trim()) || "";
+    const c = await api("/api/counts", { method: "POST", body: JSON.stringify({ outlet_id, period, label: dateVal, counted_by }) });
     CT.current = c; CT.computed = c.lines || [];
     CT.lines = (c.lines || []).map((l) => ({ kind: l.kind, ref_name: l.ref_name, container_name: l.container_name, qty: (l.in_qty != null ? l.in_qty : l.qty), unit: l.in_unit || undefined, note: l.note }));
     if (c.status === "completed") { renderCompletedCount(c); return; }
@@ -306,12 +317,16 @@ function searchBox(id, placeholder, pool, onPick) {
   setTimeout(() => {
     const input = $(id), list = $(id + "-list");
     if (!input) return;
+    const pick = (name) => { input.value = name; list.classList.add("hidden"); onPick(name); };
     const draw = () => {
       const q = input.value.trim().toLowerCase();
       const res = (q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool).slice(0, 8);
-      list.innerHTML = res.map((p) => `<button data-name="${esc(p.name)}" class="opt w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.sub || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
+      list.innerHTML = res.map((p) => `<button type="button" data-name="${esc(p.name)}" class="opt w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.sub || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
       list.classList.toggle("hidden", !input.value);
-      list.querySelectorAll(".opt").forEach((b) => (b.onclick = () => { input.value = b.dataset.name; list.classList.add("hidden"); onPick(b.dataset.name); }));
+      list.querySelectorAll(".opt").forEach((b) => {
+        b.onmousedown = (e) => { e.preventDefault(); pick(b.dataset.name); };
+        b.ontouchend = (e) => { e.preventDefault(); pick(b.dataset.name); };
+      });
     };
     input.oninput = draw; input.onfocus = draw;
     input.onblur = () => setTimeout(() => list.classList.add("hidden"), 200);

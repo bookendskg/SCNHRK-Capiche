@@ -1,5 +1,6 @@
 -- Mise stock-count app — run this in the Supabase SQL Editor once
 -- Run this migration if upgrading: ALTER TABLE containers ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'g';
+-- Run this migration if upgrading: ALTER TABLE counts ADD COLUMN IF NOT EXISTS counted_by TEXT;
 
 CREATE TABLE IF NOT EXISTS outlets (
   id BIGSERIAL PRIMARY KEY,
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS counts (
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','completed')),
   total_value REAL NOT NULL DEFAULT 0,
   created_by BIGINT REFERENCES users(id),
+  counted_by TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

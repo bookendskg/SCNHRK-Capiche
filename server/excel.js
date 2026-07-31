@@ -409,6 +409,11 @@ async function exportCount(countId) {
   ws.mergeCells("A2:I2");
   ws.getCell("A2").value = `Status: ${c.status}    Generated: ${new Date().toLocaleString("en-IN")}`;
   ws.getCell("A2").font = { color: { argb: "FF64748B" } };
+  if (c.counted_by) {
+    ws.mergeCells("A3:I3");
+    ws.getCell("A3").value = `Counted by: ${c.counted_by}`;
+    ws.getCell("A3").font = { bold: true };
+  }
   ws.addRow([]);
 
   const counted = (lines || []).filter((l) => !l.flagged);

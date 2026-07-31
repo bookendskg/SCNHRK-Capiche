@@ -488,7 +488,8 @@ app.post("/api/counts", auth, wr(async (req, res) => {
   const outlet_id = req.user.role === "admin" ? parseInt(req.body.outlet_id, 10) : req.user.outlet_id;
   const period = String(req.body.period || new Date().toISOString().slice(0, 7));
   if (!outlet_id) return res.status(400).json({ error: "Outlet required" });
-  const { data: c } = await supabase.from("counts").insert({ outlet_id, period, label: String(req.body.label || ""), created_by: req.user.id }).select().single();
+  const counted_by = String(req.body.counted_by || "").trim();
+  const { data: c } = await supabase.from("counts").insert({ outlet_id, period, label: String(req.body.label || ""), created_by: req.user.id, counted_by: counted_by || null }).select().single();
   res.json({ ...c, lines: [] });
 }));
 
