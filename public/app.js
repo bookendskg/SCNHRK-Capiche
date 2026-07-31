@@ -324,8 +324,7 @@ function searchBox(id, placeholder, pool, onPick) {
       list.innerHTML = res.map((p) => `<button type="button" data-name="${esc(p.name)}" class="opt w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.sub || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
       list.classList.toggle("hidden", !input.value);
       list.querySelectorAll(".opt").forEach((b) => {
-        b.onmousedown = (e) => { e.preventDefault(); pick(b.dataset.name); };
-        b.ontouchend = (e) => { e.preventDefault(); pick(b.dataset.name); };
+        b.addEventListener("pointerdown", (e) => { e.preventDefault(); pick(b.dataset.name); });
       });
     };
     input.oninput = draw; input.onfocus = draw;
@@ -941,12 +940,14 @@ async function renderMasters(retainPage) {
         ? hits.map((p) => `<button type="button" class="opt w-full text-left px-3 py-2 hover:bg-slate-800 flex justify-between gap-2 text-sm"><span class="truncate">${esc(p.name)}</span><span class="text-slate-500 text-xs shrink-0">${esc(p.sub || "")}</span></button>`).join("")
         : `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
       ingList.classList.remove("hidden");
-      ingList.querySelectorAll(".opt").forEach((b) => (b.onmousedown = (e) => {
-        e.preventDefault();
-        ingInput.value = b.querySelector("span").textContent.trim();
-        ingList.classList.add("hidden");
-        recompute();
-      }));
+      ingList.querySelectorAll(".opt").forEach((b) => {
+        b.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          ingInput.value = b.querySelector("span").textContent.trim();
+          ingList.classList.add("hidden");
+          recompute();
+        });
+      });
     };
     ingInput.oninput = drawList;
     ingInput.onfocus = drawList;
