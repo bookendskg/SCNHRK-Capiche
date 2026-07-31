@@ -715,26 +715,58 @@ async function startCamera(container, onCode) {
 /* ============================ Saved counts ============================ */
 async function renderCountsList() {
   let rows = []; try { rows = await api("/api/counts"); } catch {}
-  shell(`<div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-    <div class="overflow-x-auto"><table class="w-full text-sm min-w-[480px] rcard"><thead class="bg-slate-950/50 text-slate-400 text-xs uppercase">
-      <tr><th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Outlet</th><th class="text-left px-3 py-2">Status</th><th class="text-right px-3 py-2">Total</th><th></th></tr></thead>
-    <tbody class="divide-y divide-slate-800">
-    ${rows.map((c) => `<tr>
-      <td data-label="Date" class="px-3 py-2">${esc(countTitle(c))}</td><td data-label="Outlet" class="px-3 py-2 text-slate-300">${esc(c.outlet_name)}</td>
-      <td data-label="Status" class="px-3 py-2">${c.status === "completed" ? '<span class="text-emerald-400">Completed</span>' : '<span class="text-amber-400">Open</span>'}</td>
-      <td data-label="Total" class="px-3 py-2 text-right num">${inr(c.total_value)}</td>
-      <td data-label="" class="px-3 py-2 text-right whitespace-nowrap">
-        <button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>
-        <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ml-3">Export</a>
-        <button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button></td></tr>`).join("")
-      || `<tr><td colspan="5" class="px-3 py-8 text-center text-slate-500">No counts yet.</td></tr>`}
-    </tbody></table></div></div>`);
-  app.querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));
-  app.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
-    if (!confirm("Delete this count permanently?")) return;
-    try { await api("/api/counts/" + b.dataset.del, { method: "DELETE" }); toast("Deleted"); renderCountsList(); }
-    catch (e) { toast(e.message, true); }
-  }));
+  let activeTab = "open";
+
+  shell(`
+    <div class="flex gap-2 mb-3">
+      <button id="tab-open" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">Ongoing</button>
+      <button id="tab-done" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">Completed</button>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[480px] rcard">
+          <thead class="bg-slate-950/50 text-slate-400 text-xs uppercase">
+            <tr><th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Outlet</th><th class="text-right px-3 py-2">Total</th><th></th></tr>
+          </thead>
+          <tbody id="cl-body" class="divide-y divide-slate-800"></tbody>
+        </table>
+      </div>
+    </div>`);
+
+  const renderBody = () => {
+    const filtered = rows.filter((c) => activeTab === "open" ? c.status === "open" : c.status === "completed");
+    const isOpen = activeTab === "open";
+    $("cl-body").innerHTML = filtered.map((c) => `<tr>
+      <td class="px-3 py-2">${esc(countTitle(c))}</td>
+      <td class="px-3 py-2 text-slate-300">${esc(c.outlet_name || "")}</td>
+      <td class="px-3 py-2 text-right num">${inr(c.total_value)}</td>
+      <td class="px-3 py-2 text-right whitespace-nowrap">
+        ${isOpen ? `<button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>` : ""}
+        <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ${isOpen ? "ml-3" : ""}">Export</a>
+        <button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button>
+      </td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">No ${isOpen ? "ongoing" : "completed"} counts.</td></tr>`;
+
+    $("cl-body").querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));
+    $("cl-body").querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+      if (!confirm("Delete this count permanently?")) return;
+      try {
+        await api("/api/counts/" + b.dataset.del, { method: "DELETE" });
+        rows = rows.filter((r) => String(r.id) !== String(b.dataset.del));
+        toast("Deleted"); renderBody();
+      } catch (e) { toast(e.message, true); }
+    }));
+  };
+
+  const setTab = (t) => {
+    activeTab = t;
+    $("tab-open").className = `px-4 py-2 rounded-lg text-sm font-medium transition-colors ${t === "open" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-slate-200"}`;
+    $("tab-done").className = `px-4 py-2 rounded-lg text-sm font-medium transition-colors ${t === "completed" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"}`;
+    renderBody();
+  };
+
+  $("tab-open").onclick = () => setTab("open");
+  $("tab-done").onclick = () => setTab("completed");
+  setTab("open");
 }
 
 async function continueCount(countId, outlet_id, period) {

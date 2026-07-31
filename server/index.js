@@ -129,8 +129,11 @@ app.get("/api/masters/export", auth, adminOnly, wr(async (req, res) => {
 
 app.post("/api/masters/upload", auth, adminOnly, upload.single("file"), wr(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-  try { res.json(await importMasters(req.file.buffer)); }
-  catch (e) { res.status(400).json({ error: "Could not read that file: " + e.message }); }
+  try {
+    const result = await importMasters(req.file.buffer);
+    revalueAllCounts().catch((e) => console.error("[revalueAllCounts]", e.message));
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: "Could not read that file: " + e.message }); }
 }));
 
 app.get("/api/masters/:type/export", auth, adminOnly, wr(async (req, res) => {
@@ -164,6 +167,9 @@ app.post("/api/masters/:type/import", auth, adminOnly, upload.single("file"), wr
   try {
     const result = await importOne(type, req.file.buffer);
     if (type === "items") await cleanEmptyCategories();
+    if (type === "items" || type === "recipes") {
+      revalueAllCounts().catch((e) => console.error("[revalueAllCounts]", e.message));
+    }
     res.json(result);
   } catch (e) { res.status(400).json({ error: "Could not read that file: " + e.message }); }
 }));
@@ -270,6 +276,7 @@ app.put("/api/items/:id", auth, adminOnly, wr(async (req, res) => {
   const { error } = await supabase.from("items").update(p).eq("id", req.params.id);
   if (error) return res.status(400).json({ error: "An item with that name already exists" });
   await Promise.all([recomputeAllRecipeCosts(), cleanEmptyCategories()]);
+  revalueAllCounts().catch((e) => console.error("[revalueAllCounts]", e.message));
   res.json({ id: parseInt(req.params.id, 10), ...p });
 }));
 
@@ -458,6 +465,56 @@ function valueLine(raw, itemsMap, recipesMap, containersMap) {
   }
   const measured = isContainer ? base : null;
   return { kind, ref_name: raw.ref_name, container_name, container_tare, measured, in_qty, in_unit, qty, unit, unit_cost, value, flagged, note };
+}
+
+async function revalueAllCounts() {
+  const [{ data: allItems }, { data: allRecipes }, { data: allContainers }] = await Promise.all([
+    supabase.from("items").select("name,base_unit,cost_per_base,price"),
+    supabase.from("recipes").select("name,base_unit,cost_per_base"),
+    supabase.from("containers").select("name,tare"),
+  ]);
+  const itemsMap = {};
+  for (const it of allItems || []) itemsMap[it.name.toLowerCase()] = it;
+  const recipesMap = {};
+  for (const rc of allRecipes || []) recipesMap[rc.name.toLowerCase()] = rc;
+  const containersMap = {};
+  for (const ct of allContainers || []) containersMap[ct.name.toLowerCase()] = ct.tare;
+
+  const PAGE = 1000;
+  const allLines = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data } = await supabase.from("count_lines").select("*").range(offset, offset + PAGE - 1);
+    if (!data || !data.length) break;
+    allLines.push(...data);
+    if (data.length < PAGE) break;
+  }
+  if (!allLines.length) return;
+
+  const countTotals = {};
+  const lineUpdates = [];
+  for (const line of allLines) {
+    if (!countTotals[line.count_id]) countTotals[line.count_id] = 0;
+    if (line.flagged) continue;
+    const v = valueLine(
+      { kind: line.kind, ref_name: line.ref_name, container_name: line.container_name, qty: line.in_qty, unit: line.in_unit, measured: line.measured, note: line.note },
+      itemsMap, recipesMap, containersMap
+    );
+    lineUpdates.push({ id: line.id, count_id: line.count_id, unit_cost: v.unit_cost, value: v.value, qty: v.qty, unit: v.unit, container_tare: v.container_tare });
+    countTotals[line.count_id] += v.value;
+  }
+
+  for (let i = 0; i < lineUpdates.length; i += 50) {
+    await Promise.all(lineUpdates.slice(i, i + 50).map((u) =>
+      supabase.from("count_lines").update({ unit_cost: u.unit_cost, value: u.value, qty: u.qty, unit: u.unit, container_tare: u.container_tare }).eq("id", u.id)
+    ));
+  }
+  const countIds = Object.keys(countTotals);
+  for (let i = 0; i < countIds.length; i += 50) {
+    await Promise.all(countIds.slice(i, i + 50).map((id) =>
+      supabase.from("counts").update({ total_value: countTotals[id], updated_at: new Date().toISOString() }).eq("id", id)
+    ));
+  }
+  console.log(`[revalueAllCounts] ${lineUpdates.length} lines, ${countIds.length} counts`);
 }
 
 app.get("/api/counts", auth, wr(async (req, res) => {
