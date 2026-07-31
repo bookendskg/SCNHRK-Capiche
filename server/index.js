@@ -488,8 +488,13 @@ app.post("/api/counts", auth, wr(async (req, res) => {
   const outlet_id = req.user.role === "admin" ? parseInt(req.body.outlet_id, 10) : req.user.outlet_id;
   const period = String(req.body.period || new Date().toISOString().slice(0, 7));
   if (!outlet_id) return res.status(400).json({ error: "Outlet required" });
-  const counted_by = String(req.body.counted_by || "").trim();
-  const { data: c } = await supabase.from("counts").insert({ outlet_id, period, label: String(req.body.label || ""), created_by: req.user.id, counted_by: counted_by || null }).select().single();
+  const counted_by = String(req.body.counted_by || "").trim() || null;
+  let { data: c, error } = await supabase.from("counts").insert({ outlet_id, period, label: String(req.body.label || ""), created_by: req.user.id, counted_by }).select().single();
+  if (error && error.message && error.message.includes("counted_by")) {
+    // column not yet migrated — insert without it
+    ({ data: c, error } = await supabase.from("counts").insert({ outlet_id, period, label: String(req.body.label || ""), created_by: req.user.id }).select().single());
+  }
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ ...c, lines: [] });
 }));
 
