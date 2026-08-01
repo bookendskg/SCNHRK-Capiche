@@ -20,8 +20,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 
 const secretPath = path.join(DATA_DIR, ".jwtsecret");
 let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  if (fs.existsSync(secretPath)) JWT_SECRET = fs.readFileSync(secretPath, "utf8");
-  else { JWT_SECRET = crypto.randomBytes(32).toString("hex"); fs.writeFileSync(secretPath, JWT_SECRET); }
+  if (fs.existsSync(secretPath)) {
+    JWT_SECRET = fs.readFileSync(secretPath, "utf8").trim();
+  } else {
+    // Derive from Supabase key so the secret is stable across server restarts
+    // even on ephemeral filesystems (Render free tier, Railway, etc.)
+    JWT_SECRET = crypto.createHash("sha256").update("mise-jwt:" + process.env.SUPABASE_SERVICE_KEY).digest("hex");
+    try { fs.writeFileSync(secretPath, JWT_SECRET); } catch {}
+  }
 }
 const COOKIE = "mise_token";
 const secureCookie = process.env.SECURE_COOKIE === "1";
