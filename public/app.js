@@ -315,7 +315,7 @@ function renderCountWorkspace() {
 
 function renderCountTotals() { if ($("ct-total")) $("ct-total").textContent = inr(CT.current.total_value || 0); }
 
-function searchBox(id, placeholder, pool, onPick) {
+function searchBox(id, placeholder, pool, onPick, validate) {
   // pool: [{name, sub}]
   setTimeout(() => {
     const input = $(id), list = $(id + "-list");
@@ -331,7 +331,16 @@ function searchBox(id, placeholder, pool, onPick) {
       });
     };
     input.oninput = draw; input.onfocus = draw;
-    input.onblur = () => setTimeout(() => list.classList.add("hidden"), 200);
+    input.onblur = () => setTimeout(() => {
+      list.classList.add("hidden");
+      if (validate) {
+        const nm = input.value.trim();
+        if (nm && !pool.some((p) => p.name.toLowerCase() === nm.toLowerCase())) {
+          input.value = "";
+          toast("Not found in master — select from the list", true);
+        }
+      }
+    }, 200);
   }, 0);
   return `<div class="relative"><input id="${id}" autocomplete="off" placeholder="${placeholder}" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-500/40">
     <div id="${id}-list" class="hidden absolute z-20 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg overflow-hidden shadow-xl max-h-64 overflow-y-auto"></div></div>`;
@@ -452,7 +461,7 @@ function renderAddPanel() {
         </div><button id="bc-cam" class="bg-slate-800 px-3 rounded-lg">${I.cam}</button></div>
         <div id="bc-video"></div>
         <div id="bc-match" class="text-sm text-slate-400">Or search by name:</div>
-        ${searchBox("u-name", "Item name", itemsPool, (nm) => { autoSetUnit(nm); updUNet(); })}
+        ${searchBox("u-name", "Item name", itemsPool, (nm) => { autoSetUnit(nm); updUNet(); }, true)}
         <div><label class="text-xs text-slate-400">Quantity</label>
           <div class="flex gap-2">
             <input id="u-qty" type="number" inputmode="decimal" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5">
@@ -522,16 +531,27 @@ function renderAddPanel() {
       const qty = parseFloat($("u-qty").value) || 0;
       const unit = $("u-unit").value;
       const convWrap = $("u-conv-wrap");
-      const it = nm ? S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase()) : null;
-      const needsConv = it && COUNT_UNITS.includes(unit.toLowerCase()) && ["g", "ml"].includes(it.base_unit);
+      if (!nm) { toast("Select an item from the dropdown", true); return; }
+      const it = S.catalog.items.find((i) => i.name.toLowerCase() === nm.toLowerCase());
+      if (!it) { toast("Not found in item master — select from the dropdown", true); return; }
+      // Determine if a unit conversion popup is needed
+      const isWeightVolBase = ["g", "ml"].includes(it.base_unit);
+      // Case 1: count unit (pcs/qty/box…) for a weight/volume item
+      const needsWeightConv = isWeightVolBase && COUNT_UNITS.includes(unit.toLowerCase());
+      // Case 2: any other unit mismatch for countable items (not weight/volume)
+      const masterUnit = unitAliases[(it.unit || "").toLowerCase()] || (it.unit || "").toLowerCase();
+      const unitMatchesMaster = unit.toLowerCase() === masterUnit.toLowerCase() || unit.toLowerCase() === (it.base_unit || "").toLowerCase();
+      const needsCountConv = !isWeightVolBase && !unitMatchesMaster;
+      const needsConv = needsWeightConv || needsCountConv;
       if (needsConv && convWrap) {
         if (convWrap.innerHTML) return; // already showing
+        const refUnit = isWeightVolBase ? it.base_unit : (it.base_unit || it.unit || "pcs");
         convWrap.innerHTML = `<div class="mt-2 bg-amber-950/60 border border-amber-500/30 rounded-lg p-3">
-          <div class="text-xs text-amber-200 mb-2">How many <b>${it.base_unit}</b> is 1 <b>${esc(unit)}</b> of <b>${esc(nm)}</b>?</div>
+          <div class="text-xs text-amber-200 mb-2">How many <b>${esc(refUnit)}</b> is 1 <b>${esc(unit)}</b> of <b>${esc(nm)}</b>?</div>
           <div class="flex gap-2 items-center flex-wrap">
-            <input id="u-conv-val" type="number" inputmode="decimal" min="0.001" step="any" placeholder="e.g. 250"
+            <input id="u-conv-val" type="number" inputmode="decimal" min="0.001" step="any" placeholder="e.g. ${isWeightVolBase ? "250" : "1"}"
               class="w-28 bg-slate-950 border border-amber-500/40 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40">
-            <span class="text-xs text-slate-400">${it.base_unit} per ${esc(unit)}</span>
+            <span class="text-xs text-slate-400">${esc(refUnit)} per ${esc(unit)}</span>
             <button id="u-conv-ok" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-xs">Confirm & Add</button>
             <button id="u-conv-cancel" class="text-slate-500 hover:text-slate-300 text-xs px-2 py-1.5">Cancel</button>
           </div>
@@ -539,8 +559,8 @@ function renderAddPanel() {
         const convInput = $("u-conv-val"); convInput.focus();
         const confirmConv = () => {
           const conv = parseFloat(convInput.value);
-          if (!conv || conv <= 0) { toast("Enter how many " + it.base_unit + " is in 1 " + unit, true); return; }
-          addLine({ kind: "unopened", ref_name: nm, qty: qty * conv, unit: it.base_unit, note: qty + " " + unit + " × " + conv + " " + it.base_unit + "/" + unit });
+          if (!conv || conv <= 0) { toast("Enter how many " + refUnit + " is in 1 " + unit, true); return; }
+          addLine({ kind: "unopened", ref_name: nm, qty: qty * conv, unit: refUnit, note: qty + " " + unit + " × " + conv + " " + refUnit + "/" + unit });
           resetUnopened();
         };
         convInput.onkeydown = (e) => { if (e.key === "Enter") confirmConv(); if (e.key === "Escape") { convWrap.innerHTML = ""; } };
@@ -573,7 +593,7 @@ function renderAddPanel() {
     const setUnitDefault = (nm) => { const us = $(k + "-unit"); if (us) us.value = unitDropdownDefault(baseUnitOf(nm)); updNet(); };
     p.innerHTML = `
       <div class="space-y-3">
-        ${searchBox(k + "-name", k === "opened" ? "Search opened item" : "Search recipe or item", pool, setUnitDefault)}
+        ${searchBox(k + "-name", k === "opened" ? "Search opened item" : "Search recipe or item", pool, setUnitDefault, true)}
         <div><label class="text-xs text-slate-400">Stored in</label>${containerSelect(k + "-cont")}</div>
         <div id="${k}-qtywrap"></div>
         <button id="${k}-add" class="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-4 py-2.5">${I.plus} <span class="align-middle">Add to count</span></button>
@@ -592,8 +612,14 @@ function renderAddPanel() {
     };
     $(k + "-cont").onchange = drawQty; drawQty();
     $(k + "-add").onclick = () => {
+      const nm = $(k + "-name").value.trim();
+      if (!nm) { toast("Select an item from the dropdown", true); return; }
+      const inMaster = k === "processed"
+        ? (S.catalog.items.some((i) => i.name.toLowerCase() === nm.toLowerCase()) || S.catalog.recipes.some((r) => r.name.toLowerCase() === nm.toLowerCase()))
+        : S.catalog.items.some((i) => i.name.toLowerCase() === nm.toLowerCase());
+      if (!inMaster) { toast("Not found in master — select from the dropdown", true); return; }
       const cont = $(k + "-cont").value;
-      addLine({ kind: k, ref_name: $(k + "-name").value.trim(), container_name: cont || null, qty: parseFloat($(k + "-qty").value) || 0, unit: $(k + "-unit").value });
+      addLine({ kind: k, ref_name: nm, container_name: cont || null, qty: parseFloat($(k + "-qty").value) || 0, unit: $(k + "-unit").value });
       $(k + "-name").value = ""; $(k + "-cont").value = ""; drawQty();
       setTimeout(() => { const el = $(k + "-name"); if (el) el.focus(); }, 50);
     };
