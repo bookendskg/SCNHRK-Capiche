@@ -709,24 +709,27 @@ function renderLines() {
       if (extra.dataset.mode === "link") { extra.innerHTML = ""; extra.dataset.mode = ""; return; }
       extra.dataset.mode = "link";
       extra.innerHTML = `<div class="relative mt-1">
-        <input id="le-link-inp" autocomplete="off" placeholder="Search master items…" class="w-full bg-slate-950 border border-sky-500/50 rounded-lg px-3 py-2 text-sm focus:outline-none">
+        <input id="le-link-inp" autocomplete="off" placeholder="Search items &amp; recipes…" class="w-full bg-slate-950 border border-sky-500/50 rounded-lg px-3 py-2 text-sm focus:outline-none">
         <div id="le-link-list" class="hidden absolute z-20 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg overflow-hidden shadow-xl max-h-48 overflow-y-auto"></div>
       </div>`;
       setTimeout(() => {
         const inp = document.getElementById("le-link-inp");
         const list = document.getElementById("le-link-list");
         if (!inp) return;
-        const pool = (S.catalog && S.catalog.items) || [];
+        const pool = [
+          ...(S.catalog && S.catalog.items || []).map((i) => ({ name: i.name, sub: i.category || i.unit, kind: "unopened" })),
+          ...(S.catalog && S.catalog.recipes || []).map((r) => ({ name: r.name, sub: "recipe", kind: "processed" })),
+        ];
         const draw = () => {
           const q = inp.value.trim().toLowerCase();
-          const res = (q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool).slice(0, 8);
-          list.innerHTML = res.map((p) => `<button type="button" data-nm="${esc(p.name)}" class="w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.unit || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
+          const res = (q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool).slice(0, 10);
+          list.innerHTML = res.map((p) => `<button type="button" data-nm="${esc(p.name)}" data-kind="${esc(p.kind)}" class="w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.sub || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
           list.classList.toggle("hidden", !inp.value);
           list.querySelectorAll("[data-nm]").forEach((btn) => {
             btn.addEventListener("pointerdown", (e) => {
               e.preventDefault();
               CT.lines[idx].ref_name = btn.dataset.nm;
-              CT.lines[idx].kind = "unopened";
+              CT.lines[idx].kind = btn.dataset.kind;
               editingLineIdx = null;
               renderLines(); scheduleSave();
             });
