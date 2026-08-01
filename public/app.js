@@ -658,6 +658,9 @@ function renderLines() {
   const wrap = $("lines-wrap"); if (!wrap) return;
   if (!CT.lines.length) { wrap.innerHTML = `<div class="text-center text-slate-600 text-sm py-8">No lines yet. Add items above.</div>`; return; }
   const kindLabel = { unopened: "Unopened", opened: "Opened", processed: "Processed", notinmaster: "Not in master" };
+  const catMap = {};
+  for (const it of S.catalog.items) if (it.category) catMap[it.name.toLowerCase()] = it.category;
+  const catBadge = (name) => { const c = catMap[name.toLowerCase()]; return c ? ` <span class="text-[10px] text-slate-500 font-normal">${esc(c)}</span>` : ""; };
   wrap.innerHTML = `<div class="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800">
     ${CT.lines.map((l, i) => {
       const cp = CT.computed[i] || {};
@@ -670,7 +673,7 @@ function renderLines() {
           </div>
           <div id="le-extra-${i}"></div>`;
         return `<div class="px-3 py-2.5 space-y-2">
-          <div class="text-sm text-slate-100">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
+          <div class="text-sm text-slate-100">${esc(l.ref_name)}${catBadge(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
           <div class="flex gap-2 items-center flex-wrap">
             <input id="le-qty" type="number" inputmode="decimal" value="${l.qty != null ? l.qty : ""}" class="w-28 bg-slate-950 border border-amber-500/50 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40">
             <select id="le-unit" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">${[PACK_OPT, ...UNIT_OPTS].map(([v, lbl]) => `<option value="${v}"${v === l.unit ? " selected" : ""}>${lbl}</option>`).join("")}</select>
@@ -697,7 +700,7 @@ function renderLines() {
         if (l.note) detail += ` · ${esc(l.note)}`;
       }
       return `<div class="flex items-center justify-between px-3 py-2.5">
-        <div class="min-w-0"><div class="text-sm text-slate-100 truncate">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
+        <div class="min-w-0"><div class="text-sm text-slate-100 truncate">${esc(l.ref_name)}${catBadge(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
           <div class="text-xs text-slate-500 truncate">${detail}</div></div>
         <div class="flex items-center gap-2 shrink-0">
           <div class="text-sm num ${l.kind === "notinmaster" ? "text-slate-600" : "text-amber-300"}">${l.kind === "notinmaster" ? "—" : inr(cp.value || 0)}</div>
