@@ -716,6 +716,7 @@ function renderLines() {
             <button data-lsave="${i}" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-xs">Save</button>
             <button data-lcancel class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">Cancel</button>
           </div>
+          <div id="le-conv-${i}"></div>
           ${nimOpts}
         </div>`;
       }
@@ -766,9 +767,50 @@ function renderLines() {
   }));
   wrap.querySelectorAll("[data-lsave]").forEach((b) => (b.onclick = () => {
     const i = +b.dataset.lsave;
-    const v = parseFloat($("le-qty").value);
-    if (!isNaN(v) && v >= 0) CT.lines[i].qty = v;
-    const uEl = $("le-unit"); if (uEl) CT.lines[i].unit = uEl.value;
+    const qty = parseFloat($("le-qty").value);
+    const unit = ($("le-unit") && $("le-unit").value) || CT.lines[i].unit;
+    const l = CT.lines[i];
+    const it = S.catalog.items.find((x) => x.name.toLowerCase() === (l.ref_name || "").toLowerCase());
+    const COUNT_UNITS = ["pcs", "pc", "box", "qty", "piece"];
+    const isWeightVolBase = it && ["g", "ml"].includes(it.base_unit);
+    const needsWeightConv = isWeightVolBase && COUNT_UNITS.includes(unit.toLowerCase());
+    const uAliases = { g: "g", gm: "gm", kg: "kg", ml: "ml", l: "ltr", ltr: "ltr", pcs: "pcs", pc: "pcs", piece: "pcs", qty: "qty", box: "box", pack: "pack" };
+    const masterUnit = it ? (uAliases[(it.unit || "").toLowerCase()] || (it.unit || "").toLowerCase()) : null;
+    const unitMatchesMaster = it && (unit.toLowerCase() === masterUnit || unit.toLowerCase() === (it.base_unit || "").toLowerCase());
+    const needsCountConv = it && !isWeightVolBase && !unitMatchesMaster;
+    const needsConv = needsWeightConv || needsCountConv;
+    if (needsConv) {
+      const convWrap = document.getElementById("le-conv-" + i);
+      if (convWrap && convWrap.innerHTML) return;
+      const refUnit = isWeightVolBase ? it.base_unit : (it.base_unit || it.unit || "pcs");
+      if (convWrap) {
+        convWrap.innerHTML = `<div class="bg-amber-950/60 border border-amber-500/30 rounded-lg p-3">
+          <div class="text-xs text-amber-200 mb-2">How many <b>${esc(refUnit)}</b> is 1 <b>${esc(unit)}</b> of <b>${esc(l.ref_name)}</b>?</div>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="le-conv-val" type="number" inputmode="decimal" placeholder="e.g. ${isWeightVolBase ? "250" : "1"}" min="0.001" step="any"
+              class="w-28 bg-slate-950 border border-amber-500/40 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40">
+            <span class="text-xs text-slate-400">${esc(refUnit)} per ${esc(unit)}</span>
+            <button id="le-conv-ok" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-xs">Confirm & Save</button>
+            <button id="le-conv-cancel" class="text-slate-500 text-xs px-2 py-1.5">Cancel</button>
+          </div>
+        </div>`;
+        const cv = document.getElementById("le-conv-val"); cv.focus();
+        const doConv = () => {
+          const conv = parseFloat(cv.value);
+          if (!conv || conv <= 0) { toast("Enter how many " + refUnit + " is in 1 " + unit, true); return; }
+          if (!isNaN(qty) && qty >= 0) CT.lines[i].qty = qty * conv;
+          CT.lines[i].unit = refUnit;
+          CT.lines[i].note = (qty || 0) + " " + unit + " × " + conv + " " + refUnit + "/" + unit;
+          editingLineIdx = null; renderLines(); scheduleSave();
+        };
+        cv.onkeydown = (e) => { if (e.key === "Enter") doConv(); if (e.key === "Escape") convWrap.innerHTML = ""; };
+        document.getElementById("le-conv-ok").onclick = doConv;
+        document.getElementById("le-conv-cancel").onclick = () => { convWrap.innerHTML = ""; };
+      }
+      return;
+    }
+    if (!isNaN(qty) && qty >= 0) CT.lines[i].qty = qty;
+    CT.lines[i].unit = unit;
     editingLineIdx = null; renderLines(); scheduleSave();
   }));
   const lc = wrap.querySelector("[data-lcancel]");
