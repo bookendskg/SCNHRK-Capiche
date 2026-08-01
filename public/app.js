@@ -972,18 +972,18 @@ async function renderCountsList() {
       <td class="px-3 py-2 text-slate-300">${esc(c.outlet_name || "")}</td>
       <td class="px-3 py-2 text-right num">${inr(c.total_value)}</td>
       <td class="px-3 py-2 text-right whitespace-nowrap">
-        ${isOpen ? `<button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>` : ""}
-        ${!isOpen && isAdmin ? `<button data-edit="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-sky-400 hover:text-sky-300 text-xs ${isOpen ? "" : ""}">Edit</button>` : ""}
+        ${isOpen ? `<button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" data-oname="${esc(c.outlet_name || "")}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>` : ""}
+        ${!isOpen && isAdmin ? `<button data-edit="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" data-oname="${esc(c.outlet_name || "")}" class="text-sky-400 hover:text-sky-300 text-xs ${isOpen ? "" : ""}">Edit</button>` : ""}
         <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ml-3">Export</a>
         <button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button>
       </td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">No ${isOpen ? "ongoing" : "completed"} counts.</td></tr>`;
 
-    $("cl-body").querySelectorAll("[data-cont]").forEach((b) => b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period));
+    $("cl-body").querySelectorAll("[data-cont]").forEach((b) => b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period, b.dataset.oname));
     $("cl-body").querySelectorAll("[data-edit]").forEach((b) => b.onclick = async () => {
       try {
         await api("/api/counts/" + b.dataset.edit + "/reopen", { method: "POST" });
         toast("Reopened for editing");
-        continueCount(b.dataset.edit, parseInt(b.dataset.outlet, 10), b.dataset.period);
+        continueCount(b.dataset.edit, parseInt(b.dataset.outlet, 10), b.dataset.period, b.dataset.oname);
       } catch (e) { toast(e.message, true); }
     });
     $("cl-body").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
@@ -1008,13 +1008,14 @@ async function renderCountsList() {
   setTab("open");
 }
 
-async function continueCount(countId, outlet_id, period) {
+async function continueCount(countId, outlet_id, period, outletName) {
   S.nav = "count";
   await renderCount();
   const op = $("cf-outlet"); if (op && outlet_id) op.value = String(outlet_id);
   const pp = $("cf-date"); if (pp && period) { pp.value = period + "-01"; const pm = $("cf-date-text"); if (pm) pm.value = dispDate(pp.value); }
   try {
     const c = await api("/api/counts/" + countId);
+    if (!c.outlet_name && outletName) c.outlet_name = outletName;
     CT.current = c; CT.computed = c.lines || [];
     CT.lines = (c.lines || []).map((l) => ({ kind: l.kind, ref_name: l.ref_name, container_name: l.container_name, qty: (l.in_qty != null ? l.in_qty : l.qty), unit: l.in_unit || undefined, note: l.note }));
     lineSortKey = null; lineSortDir = 1; lineCatFilter = "";
