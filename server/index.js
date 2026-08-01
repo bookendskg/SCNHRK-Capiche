@@ -562,11 +562,12 @@ app.post("/api/counts", auth, wr(async (req, res) => {
 }));
 
 app.get("/api/counts/:id", auth, wr(async (req, res) => {
-  const { data: c } = await supabase.from("counts").select("*").eq("id", req.params.id).maybeSingle();
+  const { data: c } = await supabase.from("counts").select("*, outlets(name)").eq("id", req.params.id).maybeSingle();
   if (!c) return res.status(404).json({ error: "Not found" });
   if (!canSeeCount(req.user, c)) return res.status(403).json({ error: "Forbidden" });
   const { data: lines } = await supabase.from("count_lines").select("*").eq("count_id", c.id).order("id");
-  res.json({ ...c, lines: lines || [] });
+  const outlet_name = c.outlets?.name || null;
+  res.json({ ...c, outlets: undefined, outlet_name, lines: lines || [] });
 }));
 
 app.put("/api/counts/:id", auth, wr(async (req, res) => {

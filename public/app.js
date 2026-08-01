@@ -160,6 +160,9 @@ const KIND_STYLE = {
 };
 let saveTimer;
 let editingLineIdx = null;
+let lineSortKey = null;
+let lineSortDir = 1;
+let lineCatFilter = "";
 function scheduleSave() {
   clearTimeout(saveTimer);
   $("savestate") && ($("savestate").textContent = "Saving…");
@@ -283,7 +286,10 @@ function renderCountWorkspace() {
   $("count-area").innerHTML = `
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-4">
       <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-        <div><div class="font-medium">${esc(countTitle(c))} count</div><div id="savestate" class="text-[11px] text-slate-500">Saved</div></div>
+        <div>
+          <div class="font-medium">${esc(countTitle(c))} count${c.outlet_name ? ` <span class="text-slate-400 font-normal">· ${esc(c.outlet_name)}</span>` : ""}</div>
+          <div class="text-[11px] text-slate-500">${c.counted_by ? `by ${esc(c.counted_by)} · ` : ""}<span id="savestate">Saved</span></div>
+        </div>
         <div class="text-right"><div class="text-[11px] text-slate-500 uppercase">Total</div><div id="ct-total" class="text-lg font-semibold text-amber-300 num">${inr(c.total_value || 0)}</div></div>
       </div>
       <div class="p-3">
@@ -661,8 +667,38 @@ function renderLines() {
   const catMap = {};
   for (const it of S.catalog.items) if (it.category) catMap[it.name.toLowerCase()] = it.category;
   const catBadge = (name) => { const c = catMap[name.toLowerCase()]; return c ? ` <span class="text-[10px] text-slate-500 font-normal">${esc(c)}</span>` : ""; };
-  wrap.innerHTML = `<div class="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800">
-    ${CT.lines.map((l, i) => {
+
+  // Build sorted + filtered display order (indices into CT.lines)
+  let indices = CT.lines.map((_, i) => i);
+  if (lineCatFilter) indices = indices.filter((i) => catMap[(CT.lines[i].ref_name || "").toLowerCase()] === lineCatFilter);
+  if (lineSortKey) {
+    indices.sort((a, b) => {
+      let av, bv;
+      if (lineSortKey === "name") { av = (CT.lines[a].ref_name || "").toLowerCase(); bv = (CT.lines[b].ref_name || "").toLowerCase(); }
+      else if (lineSortKey === "category") { av = catMap[(CT.lines[a].ref_name || "").toLowerCase()] || "￿"; bv = catMap[(CT.lines[b].ref_name || "").toLowerCase()] || "￿"; }
+      else if (lineSortKey === "value") { av = (CT.computed[a] || {}).value || 0; bv = (CT.computed[b] || {}).value || 0; return (av - bv) * lineSortDir; }
+      return av.localeCompare(bv) * lineSortDir;
+    });
+  }
+
+  // Category filter options from lines actually present
+  const cats = [...new Set(CT.lines.map((l) => catMap[(l.ref_name || "").toLowerCase()]).filter(Boolean))].sort();
+  const arrow = (k) => lineSortKey === k ? (lineSortDir === 1 ? " ▲" : " ▼") : " ↕";
+  const thBtn = (k, label) => `<button data-lsort="${k}" class="text-xs hover:text-slate-200 whitespace-nowrap select-none${lineSortKey === k ? " text-amber-300" : " text-slate-400"}">${label}${arrow(k)}</button>`;
+
+  wrap.innerHTML = `
+    <div class="bg-slate-900 border border-slate-800 rounded-xl mb-2 px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      ${thBtn("name", "Name")}
+      ${thBtn("category", "Category")}
+      <select id="lf-cat" class="text-xs bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-slate-300">
+        <option value="">All categories</option>
+        ${cats.map((c) => `<option value="${esc(c)}"${lineCatFilter === c ? " selected" : ""}>${esc(c)}</option>`).join("")}
+      </select>
+      <div class="ml-auto">${thBtn("value", "Price")}</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800">
+    ${indices.map((i) => {
+      const l = CT.lines[i];
       const cp = CT.computed[i] || {};
       const ks = KIND_STYLE[l.kind] || KIND_STYLE.unopened;
       if (i === editingLineIdx) {
@@ -709,6 +745,14 @@ function renderLines() {
         </div>
       </div>`;
     }).join("")}</div>`;
+  wrap.querySelectorAll("[data-lsort]").forEach((b) => b.addEventListener("pointerdown", () => {
+    const k = b.dataset.lsort;
+    if (lineSortKey === k) lineSortDir *= -1; else { lineSortKey = k; lineSortDir = k === "value" ? -1 : 1; }
+    renderLines();
+  }));
+  const lfCat = $("lf-cat");
+  if (lfCat) lfCat.onchange = () => { lineCatFilter = lfCat.value; renderLines(); };
+
   wrap.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => {
     const idx = +b.dataset.del;
     CT.lines.splice(idx, 1); CT.computed.splice(idx, 1);
@@ -924,6 +968,7 @@ async function continueCount(countId, outlet_id, period) {
     const c = await api("/api/counts/" + countId);
     CT.current = c; CT.computed = c.lines || [];
     CT.lines = (c.lines || []).map((l) => ({ kind: l.kind, ref_name: l.ref_name, container_name: l.container_name, qty: (l.in_qty != null ? l.in_qty : l.qty), unit: l.in_unit || undefined, note: l.note }));
+    lineSortKey = null; lineSortDir = 1; lineCatFilter = "";
     if (c.status === "completed") { renderCompletedCount(c); return; }
     renderCountWorkspace();
   } catch (e) { toast(e.message, true); }
