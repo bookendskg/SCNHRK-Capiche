@@ -271,7 +271,10 @@ function renderCompletedCount(c) {
     <div class="text-sm text-slate-400">This count is completed and locked. Total ${inr(c.total_value)}.</div>
     ${S.me.role === "admin" ? `<button id="reopen" class="mt-3 text-xs text-slate-300 underline">Reopen for editing</button>` : ""}
   </div>`;
-  if ($("reopen")) $("reopen").onclick = async () => { await api("/api/counts/" + c.id + "/reopen", { method: "POST" }); openCount(); };
+  if ($("reopen")) $("reopen").onclick = async () => {
+    try { await api("/api/counts/" + c.id + "/reopen", { method: "POST" }); continueCount(c.id, c.outlet_id, c.period); }
+    catch (e) { toast(e.message, true); }
+  };
 }
 
 function renderCountWorkspace() {
@@ -716,6 +719,9 @@ async function startCamera(container, onCode) {
 async function renderCountsList() {
   let rows = []; try { rows = await api("/api/counts"); } catch {}
   let activeTab = "open";
+  let sortKey = "period";
+  let sortDir = -1;
+  const isAdmin = S.me && S.me.role === "admin";
 
   shell(`
     <div class="flex gap-2 mb-3">
@@ -725,16 +731,35 @@ async function renderCountsList() {
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
       <div class="overflow-x-auto">
         <table class="w-full text-sm min-w-[480px] rcard">
-          <thead class="bg-slate-950/50 text-slate-400 text-xs uppercase">
-            <tr><th class="text-left px-3 py-2">Date</th><th class="text-left px-3 py-2">Outlet</th><th class="text-right px-3 py-2">Total</th><th></th></tr>
-          </thead>
+          <thead id="cl-head" class="bg-slate-950/50 text-slate-400 text-xs uppercase select-none"></thead>
           <tbody id="cl-body" class="divide-y divide-slate-800"></tbody>
         </table>
       </div>
     </div>`);
 
+  const arrow = (key) => sortKey === key ? (sortDir === 1 ? " ▲" : " ▼") : " ↕";
+  const thCls = "px-3 py-2 cursor-pointer hover:text-slate-200 whitespace-nowrap";
+
+  const renderHead = () => {
+    $("cl-head").innerHTML = `<tr>
+      <th class="${thCls} text-left" data-sk="period">Date${arrow("period")}</th>
+      <th class="${thCls} text-left" data-sk="outlet_name">Outlet${arrow("outlet_name")}</th>
+      <th class="${thCls} text-right" data-sk="total_value">Total${arrow("total_value")}</th>
+      <th></th></tr>`;
+    $("cl-head").querySelectorAll("[data-sk]").forEach((th) => th.addEventListener("pointerdown", () => {
+      if (sortKey === th.dataset.sk) sortDir *= -1;
+      else { sortKey = th.dataset.sk; sortDir = sortKey === "total_value" ? -1 : 1; }
+      renderHead(); renderBody();
+    }));
+  };
+
+  const getSorted = (list) => [...list].sort((a, b) => {
+    const av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
+    return (typeof av === "number" ? av - bv : String(av).localeCompare(String(bv))) * sortDir;
+  });
+
   const renderBody = () => {
-    const filtered = rows.filter((c) => activeTab === "open" ? c.status === "open" : c.status === "completed");
+    const filtered = getSorted(rows.filter((c) => activeTab === "open" ? c.status === "open" : c.status === "completed"));
     const isOpen = activeTab === "open";
     $("cl-body").innerHTML = filtered.map((c) => `<tr>
       <td class="px-3 py-2">${esc(countTitle(c))}</td>
@@ -742,26 +767,34 @@ async function renderCountsList() {
       <td class="px-3 py-2 text-right num">${inr(c.total_value)}</td>
       <td class="px-3 py-2 text-right whitespace-nowrap">
         ${isOpen ? `<button data-cont="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-emerald-300 hover:text-emerald-200 text-xs">Continue</button>` : ""}
-        <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ${isOpen ? "ml-3" : ""}">Export</a>
+        ${!isOpen && isAdmin ? `<button data-edit="${c.id}" data-outlet="${c.outlet_id}" data-period="${esc(c.period)}" class="text-sky-400 hover:text-sky-300 text-xs ${isOpen ? "" : ""}">Edit</button>` : ""}
+        <a href="/api/counts/${c.id}/export" class="text-amber-300 text-xs ml-3">Export</a>
         <button data-del="${c.id}" class="text-slate-600 hover:text-red-400 text-xs ml-3">Delete</button>
       </td></tr>`).join("") || `<tr><td colspan="4" class="px-3 py-8 text-center text-slate-500">No ${isOpen ? "ongoing" : "completed"} counts.</td></tr>`;
 
-    $("cl-body").querySelectorAll("[data-cont]").forEach((b) => (b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period)));
-    $("cl-body").querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+    $("cl-body").querySelectorAll("[data-cont]").forEach((b) => b.onclick = () => continueCount(b.dataset.cont, parseInt(b.dataset.outlet, 10), b.dataset.period));
+    $("cl-body").querySelectorAll("[data-edit]").forEach((b) => b.onclick = async () => {
+      try {
+        await api("/api/counts/" + b.dataset.edit + "/reopen", { method: "POST" });
+        toast("Reopened for editing");
+        continueCount(b.dataset.edit, parseInt(b.dataset.outlet, 10), b.dataset.period);
+      } catch (e) { toast(e.message, true); }
+    });
+    $("cl-body").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
       if (!confirm("Delete this count permanently?")) return;
       try {
         await api("/api/counts/" + b.dataset.del, { method: "DELETE" });
         rows = rows.filter((r) => String(r.id) !== String(b.dataset.del));
         toast("Deleted"); renderBody();
       } catch (e) { toast(e.message, true); }
-    }));
+    });
   };
 
   const setTab = (t) => {
     activeTab = t;
     $("tab-open").className = `px-4 py-2 rounded-lg text-sm font-medium transition-colors ${t === "open" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-slate-200"}`;
     $("tab-done").className = `px-4 py-2 rounded-lg text-sm font-medium transition-colors ${t === "completed" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"}`;
-    renderBody();
+    renderHead(); renderBody();
   };
 
   $("tab-open").onclick = () => setTab("open");
