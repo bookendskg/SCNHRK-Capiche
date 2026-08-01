@@ -637,6 +637,12 @@ function renderLines() {
       const cp = CT.computed[i] || {};
       const ks = KIND_STYLE[l.kind] || KIND_STYLE.unopened;
       if (i === editingLineIdx) {
+        const nimOpts = l.kind === "notinmaster" ? `
+          <div class="flex gap-3 pt-1.5 border-t border-slate-800">
+            <button data-link-master="${i}" class="text-xs text-sky-400 hover:text-sky-300">↗ Link to existing item</button>
+            ${S.me.role === "admin" ? `<button data-add-master="${i}" class="text-xs text-emerald-400 hover:text-emerald-300">+ Add to master</button>` : ""}
+          </div>
+          <div id="le-extra-${i}"></div>` : "";
         return `<div class="px-3 py-2.5 space-y-2">
           <div class="text-sm text-slate-100">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
           <div class="flex gap-2 items-center flex-wrap">
@@ -645,6 +651,7 @@ function renderLines() {
             <button data-lsave="${i}" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium rounded-lg px-3 py-1.5 text-xs">Save</button>
             <button data-lcancel class="bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 text-xs">Cancel</button>
           </div>
+          ${nimOpts}
         </div>`;
       }
       const inU = cp.in_unit, inQ = cp.in_qty;
@@ -693,6 +700,80 @@ function renderLines() {
   }));
   const lc = wrap.querySelector("[data-lcancel]");
   if (lc) lc.onclick = () => { editingLineIdx = null; renderLines(); };
+
+  wrap.querySelectorAll("[data-link-master]").forEach((b) => {
+    b.onclick = () => {
+      const idx = +b.dataset.linkMaster;
+      const extra = document.getElementById("le-extra-" + idx);
+      if (!extra) return;
+      if (extra.dataset.mode === "link") { extra.innerHTML = ""; extra.dataset.mode = ""; return; }
+      extra.dataset.mode = "link";
+      extra.innerHTML = `<div class="relative mt-1">
+        <input id="le-link-inp" autocomplete="off" placeholder="Search master items…" class="w-full bg-slate-950 border border-sky-500/50 rounded-lg px-3 py-2 text-sm focus:outline-none">
+        <div id="le-link-list" class="hidden absolute z-20 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg overflow-hidden shadow-xl max-h-48 overflow-y-auto"></div>
+      </div>`;
+      setTimeout(() => {
+        const inp = document.getElementById("le-link-inp");
+        const list = document.getElementById("le-link-list");
+        if (!inp) return;
+        const pool = (S.catalog && S.catalog.items) || [];
+        const draw = () => {
+          const q = inp.value.trim().toLowerCase();
+          const res = (q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool).slice(0, 8);
+          list.innerHTML = res.map((p) => `<button type="button" data-nm="${esc(p.name)}" class="w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.unit || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
+          list.classList.toggle("hidden", !inp.value);
+          list.querySelectorAll("[data-nm]").forEach((btn) => {
+            btn.addEventListener("pointerdown", (e) => {
+              e.preventDefault();
+              CT.lines[idx].ref_name = btn.dataset.nm;
+              CT.lines[idx].kind = "unopened";
+              editingLineIdx = null;
+              renderLines(); scheduleSave();
+            });
+          });
+        };
+        inp.oninput = draw; inp.onfocus = draw;
+        inp.onblur = () => setTimeout(() => list.classList.add("hidden"), 200);
+        inp.focus();
+      }, 0);
+    };
+  });
+
+  wrap.querySelectorAll("[data-add-master]").forEach((b) => {
+    b.onclick = () => {
+      const idx = +b.dataset.addMaster;
+      const extra = document.getElementById("le-extra-" + idx);
+      if (!extra) return;
+      if (extra.dataset.mode === "add") { extra.innerHTML = ""; extra.dataset.mode = ""; return; }
+      extra.dataset.mode = "add";
+      const nm = CT.lines[idx].ref_name;
+      extra.innerHTML = `<div class="bg-slate-950 rounded-lg p-2 space-y-2 mt-1">
+        <div class="text-xs text-slate-400">Adding "<span class="text-slate-200">${esc(nm)}</span>" to master</div>
+        <div class="flex gap-2 flex-wrap items-center">
+          <select id="le-am-unit" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+            ${UNIT_OPTS.map(([v, lbl]) => `<option value="${v}">${lbl}</option>`).join("")}
+          </select>
+          <input id="le-am-pack" type="number" inputmode="decimal" placeholder="Pack qty" value="1" class="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+          <input id="le-am-price" type="number" inputmode="decimal" placeholder="Price/pack (₹)" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm">
+          <button id="le-am-save" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Add to master</button>
+        </div>
+      </div>`;
+      document.getElementById("le-am-price").focus();
+      document.getElementById("le-am-save").onclick = async () => {
+        const unit = document.getElementById("le-am-unit").value;
+        const pack_qty = parseFloat(document.getElementById("le-am-pack").value) || 1;
+        const price = parseFloat(document.getElementById("le-am-price").value) || 0;
+        try {
+          await api("/api/items", { method: "POST", body: JSON.stringify({ name: nm, unit, pack_qty, price }) });
+          S.catalog = await api("/api/catalog");
+          CT.lines[idx].kind = "unopened";
+          editingLineIdx = null;
+          toast("Added to master: " + nm);
+          renderLines(); scheduleSave();
+        } catch (e) { toast(e.message, true); }
+      };
+    };
+  });
 }
 
 async function startCamera(container, onCode) {
