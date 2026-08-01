@@ -260,6 +260,9 @@ async function openCount() {
     const c = await api("/api/counts", { method: "POST", body: JSON.stringify({ outlet_id, period, label: dateVal, counted_by }) });
     CT.current = c; CT.computed = c.lines || [];
     CT.lines = (c.lines || []).map((l) => ({ kind: l.kind, ref_name: l.ref_name, container_name: l.container_name, qty: (l.in_qty != null ? l.in_qty : l.qty), unit: l.in_unit || undefined, note: l.note }));
+    // Attach outlet name client-side since POST doesn't join it
+    if (admin) { const op = $("cf-outlet"); CT.current.outlet_name = op ? op.selectedOptions[0]?.text : null; }
+    else CT.current.outlet_name = S.me.outlet_name || null;
     if (c.status === "completed") { renderCompletedCount(c); return; }
     renderCountWorkspace();
   } catch (e) { toast(e.message, true); }
@@ -286,11 +289,14 @@ function renderCountWorkspace() {
   $("count-area").innerHTML = `
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-4">
       <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-        <div>
-          <div class="font-medium">${esc(countTitle(c))} count${c.outlet_name ? ` <span class="text-slate-400 font-normal">· ${esc(c.outlet_name)}</span>` : ""}</div>
-          <div class="text-[11px] text-slate-500">${c.counted_by ? `by ${esc(c.counted_by)} · ` : ""}<span id="savestate">Saved</span></div>
+        <div class="flex items-center gap-3 min-w-0">
+          <button id="back-to-counts" title="Back to saved counts" class="shrink-0 text-slate-400 hover:text-amber-300 text-xl leading-none">←</button>
+          <div class="min-w-0">
+            <div class="font-medium truncate">${esc(countTitle(c))} count${c.outlet_name ? ` <span class="text-slate-400 font-normal">· ${esc(c.outlet_name)}</span>` : ""}</div>
+            <div class="text-[11px] text-slate-500">${c.counted_by ? `by ${esc(c.counted_by)} · ` : ""}<span id="savestate">Saved</span></div>
+          </div>
         </div>
-        <div class="text-right"><div class="text-[11px] text-slate-500 uppercase">Total</div><div id="ct-total" class="text-lg font-semibold text-amber-300 num">${inr(c.total_value || 0)}</div></div>
+        <div class="text-right shrink-0 ml-3"><div class="text-[11px] text-slate-500 uppercase">Total</div><div id="ct-total" class="text-lg font-semibold text-amber-300 num">${inr(c.total_value || 0)}</div></div>
       </div>
       <div class="p-3">
         <div class="flex gap-1.5 mb-3 overflow-x-auto">
@@ -305,6 +311,7 @@ function renderCountWorkspace() {
       <a href="/api/counts/${c.id}/export" class="btn-pop flex-1 text-center bg-slate-800 hover:bg-slate-700 rounded-lg py-2.5 text-sm">${I.down} <span class="align-middle">Export Excel</span></a>
       <button id="complete" class="btn-pop flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-lg py-2.5 text-sm">${I.check} <span class="align-middle">Mark complete</span></button>
     </div>`;
+  $("back-to-counts").onclick = () => { S.nav = "counts"; route(); };
   app.querySelectorAll(".addtab").forEach((b) => (b.onclick = () => { CT.addKind = b.dataset.kind; renderCountWorkspace(); }));
   $("complete").onclick = async () => {
     if (!confirm("Mark count as complete? No more items can be added.")) return;
