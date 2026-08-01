@@ -717,24 +717,24 @@ function renderLines() {
         const list = document.getElementById("le-link-list");
         if (!inp) return;
         const pool = [
-          ...(S.catalog && S.catalog.items || []).map((i) => ({ name: i.name, sub: i.category || i.unit, kind: "unopened" })),
           ...(S.catalog && S.catalog.recipes || []).map((r) => ({ name: r.name, sub: "recipe", kind: "processed" })),
+          ...(S.catalog && S.catalog.items || []).map((i) => ({ name: i.name, sub: i.category || i.unit, kind: "unopened" })),
         ];
         const draw = () => {
           const q = inp.value.trim().toLowerCase();
-          const res = (q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool).slice(0, 10);
-          list.innerHTML = res.map((p) => `<button type="button" data-nm="${esc(p.name)}" data-kind="${esc(p.kind)}" class="w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.sub || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
+          const res = (q ? pool.filter((p) => p.name.toLowerCase().includes(q)) : pool).slice(0, 12);
+          list.innerHTML = res.map((p) => `<button type="button" data-nm="${esc(p.name)}" data-kind="${esc(p.kind)}" class="opt w-full text-left px-3 py-2 hover:bg-slate-800 text-sm flex justify-between"><span>${esc(p.name)}</span><span class="text-slate-500 text-xs">${esc(p.sub || "")}</span></button>`).join("") || `<div class="px-3 py-2 text-sm text-slate-500">No match</div>`;
           list.classList.toggle("hidden", !inp.value);
-          list.querySelectorAll("[data-nm]").forEach((btn) => {
-            btn.addEventListener("pointerdown", (e) => {
-              e.preventDefault();
-              CT.lines[idx].ref_name = btn.dataset.nm;
-              CT.lines[idx].kind = btn.dataset.kind;
-              editingLineIdx = null;
-              renderLines(); scheduleSave();
-            });
-          });
         };
+        list.addEventListener("pointerdown", (e) => {
+          const btn = e.target.closest("[data-nm]");
+          if (!btn) return;
+          e.preventDefault();
+          CT.lines[idx].ref_name = btn.dataset.nm;
+          CT.lines[idx].kind = btn.dataset.kind;
+          editingLineIdx = null;
+          renderLines(); scheduleSave();
+        });
         inp.oninput = draw; inp.onfocus = draw;
         inp.onblur = () => setTimeout(() => list.classList.add("hidden"), 200);
         inp.focus();
