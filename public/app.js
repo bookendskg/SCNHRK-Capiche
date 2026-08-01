@@ -637,12 +637,12 @@ function renderLines() {
       const cp = CT.computed[i] || {};
       const ks = KIND_STYLE[l.kind] || KIND_STYLE.unopened;
       if (i === editingLineIdx) {
-        const nimOpts = l.kind === "notinmaster" ? `
+        const nimOpts = `
           <div class="flex gap-3 pt-1.5 border-t border-slate-800">
-            <button data-link-master="${i}" class="text-xs text-sky-400 hover:text-sky-300">↗ Link to existing item</button>
-            ${S.me.role === "admin" ? `<button data-add-master="${i}" class="text-xs text-emerald-400 hover:text-emerald-300">+ Add to master</button>` : ""}
+            <button data-link-master="${i}" class="text-xs text-sky-400 hover:text-sky-300">↗ Change item</button>
+            ${l.kind === "notinmaster" && S.me.role === "admin" ? `<button data-add-master="${i}" class="text-xs text-emerald-400 hover:text-emerald-300">+ Add to master</button>` : ""}
           </div>
-          <div id="le-extra-${i}"></div>` : "";
+          <div id="le-extra-${i}"></div>`;
         return `<div class="px-3 py-2.5 space-y-2">
           <div class="text-sm text-slate-100">${esc(l.ref_name)} <span class="text-[10px] ${ks.text}">${kindLabel[l.kind]}</span></div>
           <div class="flex gap-2 items-center flex-wrap">
