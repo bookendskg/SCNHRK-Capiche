@@ -140,20 +140,38 @@ async function exportOne(type, useLive, opts = {}) {
   addSheet(wb, def, rows && rows.length ? rows : def.sample.slice(0, 0));
 
   if (type === "recipes" && useLive) {
-    const { data: rcs } = await supabase.from("recipes").select("name, yield_qty, base_unit, cost_per_base").order("name");
+    const [{ data: rcs }, { data: rlines }] = await Promise.all([
+      supabase.from("recipes").select("name, yield_qty, base_unit, cost_per_base").order("name"),
+      supabase.from("recipe_lines").select("recipe_id, ingredient, qty"),
+    ]);
+    const byRecipe = {};
+    for (const ln of rlines || []) {
+      if (!byRecipe[ln.recipe_id]) byRecipe[ln.recipe_id] = [];
+      byRecipe[ln.recipe_id].push(ln);
+    }
     const ws2 = wb.addWorksheet("Recipe Costs");
     ws2.columns = [
       { header: "recipe", key: "recipe", width: 30 },
       { header: "yield", key: "yield", width: 10 },
       { header: "base_unit", key: "base_unit", width: 10 },
+      { header: "ingredient", key: "ingredient", width: 28 },
+      { header: "qty", key: "qty", width: 10 },
       { header: "cost_per_unit", key: "cost_per_unit", width: 16 },
       { header: "total_batch_cost", key: "total_batch_cost", width: 18 },
     ];
     styleHeader(ws2.getRow(1));
-    for (const [i, r] of (rcs || []).entries()) {
+    let band = false;
+    for (const r of rcs || []) {
       const total = (r.cost_per_base || 0) * (r.yield_qty || 0);
-      const row = ws2.addRow([r.name, r.yield_qty, r.base_unit, r.cost_per_base || 0, total]);
-      if (i % 2) row.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } }; });
+      const fill = band ? { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } } : undefined;
+      const recipeRow = ws2.addRow([r.name, r.yield_qty, r.base_unit, "", "", r.cost_per_base || 0, total]);
+      recipeRow.font = { bold: true };
+      if (fill) recipeRow.eachCell((c) => { c.fill = fill; });
+      for (const ln of byRecipe[r.id] || []) {
+        const ingRow = ws2.addRow(["", "", "", ln.ingredient, ln.qty, "", ""]);
+        if (fill) ingRow.eachCell((c) => { c.fill = fill; });
+      }
+      band = !band;
     }
     ws2.getColumn("cost_per_unit").numFmt = "₹#,##0.00";
     ws2.getColumn("total_batch_cost").numFmt = "₹#,##0.00";
