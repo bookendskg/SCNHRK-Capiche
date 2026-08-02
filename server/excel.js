@@ -4,6 +4,17 @@ const { supabase, baseOf, itemCostPerBase, recomputeAllRecipeCosts } = require("
 
 const HEAD = "FF1E293B", HEADTXT = "FFFFFFFF", ZEBRA = "FFF8FAFC", FLAG = "FFFEF3C7";
 
+async function fetchAllRecipeLines() {
+  const all = [];
+  for (let off = 0; ; off += 1000) {
+    const { data } = await supabase.from("recipe_lines").select("recipe_id, ingredient, qty").range(off, off + 999);
+    if (!data || !data.length) break;
+    all.push(...data);
+    if (data.length < 1000) break;
+  }
+  return all;
+}
+
 function styleHeader(row) {
   row.eachCell((c) => {
     c.font = { bold: true, color: { argb: HEADTXT } };
@@ -68,13 +79,11 @@ const MASTERS = {
       ["Sugar syrup", 130, "g", "Water", 20],
       ["Sugar syrup", 130, "g", "Citric acid", 10],
     ],
-    live: async () => {
-      const [{ data: rcs }, { data: lines }] = await Promise.all([
-        supabase.from("recipes").select("*").order("name"),
-        supabase.from("recipe_lines").select("*"),
-      ]);
+    live: async (sharedLines) => {
+      const { data: rcs } = await supabase.from("recipes").select("*").order("name");
+      const lines = sharedLines || await fetchAllRecipeLines();
       const byRecipe = {};
-      for (const ln of lines || []) {
+      for (const ln of lines) {
         if (!byRecipe[ln.recipe_id]) byRecipe[ln.recipe_id] = [];
         byRecipe[ln.recipe_id].push(ln);
       }
@@ -133,19 +142,18 @@ async function exportOne(type, useLive, opts = {}) {
   if (!def) throw new Error("Unknown master: " + type);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Mise";
-  let rows = useLive ? await def.live() : null;
+  let sharedRecipeLines = null;
+  if (type === "recipes" && useLive) sharedRecipeLines = await fetchAllRecipeLines();
+  let rows = useLive ? await def.live(sharedRecipeLines) : null;
   if (type === "items" && useLive && opts.category) {
     rows = (rows || []).filter((r) => r[1] === opts.category);
   }
   addSheet(wb, def, rows && rows.length ? rows : def.sample.slice(0, 0));
 
   if (type === "recipes" && useLive) {
-    const [{ data: rcs }, { data: rlines }] = await Promise.all([
-      supabase.from("recipes").select("name, yield_qty, base_unit, cost_per_base").order("name"),
-      supabase.from("recipe_lines").select("recipe_id, ingredient, qty"),
-    ]);
+    const { data: rcs } = await supabase.from("recipes").select("name, yield_qty, base_unit, cost_per_base").order("name");
     const byRecipe = {};
-    for (const ln of rlines || []) {
+    for (const ln of sharedRecipeLines) {
       if (!byRecipe[ln.recipe_id]) byRecipe[ln.recipe_id] = [];
       byRecipe[ln.recipe_id].push(ln);
     }
